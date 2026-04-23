@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    VoiceAttend AI – iOS Permissions (Info.plist additions)
+    =========================================================
+    Merge these keys into:
+        mobile/ios/Runner/Info.plist
+
+    They declare the microphone usage description shown to the user
+    by iOS when the app first requests permission.
+-->
+<plist version="1.0">
+<dict>
+
+    <!-- Microphone permission (required by the `record` package) -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>VoiceAttend needs microphone access to record your voice for attendance marking.</string>
+
+    <!-- Local network permission (for connecting to local FastAPI server) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>VoiceAttend connects to a local attendance server on your network.</string>
+
+    <!--
+        Allow arbitrary HTTP loads in development.
+        Remove this in production and pin to your HTTPS server.
+    -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+
+</dict>
+</plist>

@@ -1,0 +1,76 @@
+# ============================================================
+# VoiceAttend AI – .gitignore
+# ============================================================
+
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ── Environment / Secrets ───────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Database ────────────────────────────────────────────────
+*.dump
+*.sql.bak
+
+# ── AI Model Weights (large files – store with Git LFS) ─────
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.keras
+*.tflite
+*.onnx
+
+# ── Audio Temp Files ────────────────────────────────────────
+*.wav
+*.mp3
+*.ogg
+*.flac
+
+# ── Flutter / Dart ──────────────────────────────────────────
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.pub-cache/
+mobile/.pub/
+mobile/build/
+mobile/android/.gradle/
+mobile/android/captures/
+mobile/android/local.properties
+mobile/android/key.properties
+mobile/*.keystore
+mobile/*.jks
+mobile/ios/.symlinks/
+mobile/ios/Pods/
+mobile/ios/Flutter/flutter_export_environment.sh
+mobile/ios/Flutter/Generated.xcconfig
+mobile/.packages
+mobile/pubspec.lock   # commit this in real projects; ignored here for brevity
+
+# ── IDE / Editor ────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
