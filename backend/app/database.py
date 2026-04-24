@@ -1,5 +1,5 @@
 """
-VoiceAttend AI - PostgreSQL Database Layer (FIXED FULL VERSION)
+VoiceAttend AI - PostgreSQL Database Layer (RENDER + SUPABASE FIXED)
 """
 
 import os
@@ -14,20 +14,34 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # ─────────────────────────────
 def get_connection():
     if not DATABASE_URL:
-        raise Exception("DATABASE_URL not set")
+        raise Exception("❌ DATABASE_URL not set")
 
-    return psycopg2.connect(DATABASE_URL)
+    try:
+        conn = psycopg2.connect(
+            DATABASE_URL,
+            sslmode="require"  # 🔥 REQUIRED FOR SUPABASE
+        )
+        return conn
+    except Exception as e:
+        print("❌ Connection failed:", e)
+        raise e
 
 
 # ─────────────────────────────
 # INIT DB
 # ─────────────────────────────
 def init_db():
-    conn = get_connection()
+    print("🚀 Initializing database...")
+
+    conn = None
+
     try:
+        conn = get_connection()
+
         with conn:
             with conn.cursor() as cur:
 
+                # USERS
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS users (
                         id SERIAL PRIMARY KEY,
@@ -38,6 +52,7 @@ def init_db():
                     );
                 """)
 
+                # VOICE PROFILES
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS voice_profiles (
                         id SERIAL PRIMARY KEY,
@@ -46,6 +61,7 @@ def init_db():
                     );
                 """)
 
+                # ATTENDANCE LOGS
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS attendance_logs (
                         id SERIAL PRIMARY KEY,
@@ -54,10 +70,15 @@ def init_db():
                     );
                 """)
 
-        print("[DB] Connected successfully")
+        print("✅ Database connected and tables ready")
+
+    except Exception as e:
+        print("❌ DATABASE INIT ERROR:", e)
+        raise e
 
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 
 # ─────────────────────────────
@@ -109,13 +130,10 @@ def get_user_by_id(user_id: int):
 
 
 # ─────────────────────────────
-# VOICE PROFILE FUNCTIONS (FIX ADDED)
+# VOICE PROFILE FUNCTIONS
 # ─────────────────────────────
 
 def save_voice_profile(user_id: int, embedding: str):
-    """
-    Saves face/voice embedding for a user
-    """
     conn = get_connection()
     try:
         with conn:
@@ -145,6 +163,17 @@ def get_voice_profile(user_id: int):
         conn.close()
 
 
+def get_all_voice_profiles():
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM voice_profiles")
+                return cur.fetchall()
+    finally:
+        conn.close()
+
+
 # ─────────────────────────────
 # ATTENDANCE
 # ─────────────────────────────
@@ -161,18 +190,5 @@ def log_attendance(user_name: str):
                 """, (user_name,))
 
                 return cur.fetchone()
-    finally:
-        conn.close()
-
-
-
-
-def get_all_voice_profiles():
-    conn = get_connection()
-    try:
-        with conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT * FROM voice_profiles")
-                return cur.fetchall()
     finally:
         conn.close()
