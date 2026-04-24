@@ -37,7 +37,7 @@ async def register(
         raise HTTPException(status_code=422, detail=f"Voice processing failed: {exc}")
 
     user = create_user(name=name, email=email, password_hash=hash_password(password))
-    save_voice_profile(str(user["id"]), embedding)
+    save_voice_profile(user["id"], embedding)
 
     token = create_access_token(str(user["id"]), user["role"])
     return {"access_token": token, "token_type": "bearer", "user": user}
@@ -72,7 +72,7 @@ async def voice_login(voice: UploadFile = File(...)):
     if not match:
         raise HTTPException(status_code=401, detail=f"Voice not recognised (score: {score:.3f})")
 
-    user  = get_user_by_id(str(match["user_id"]))
+    user  = get_user_by_id(match["user_id"])
     token = create_access_token(str(user["id"]), user["role"])
     safe  = {k: v for k, v in user.items() if k != "password_hash"}
     return {"access_token": token, "token_type": "bearer", "user": safe}
