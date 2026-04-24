@@ -61,13 +61,11 @@ def init_db():
         """)
 
         # ATTENDANCE LOGS
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS attendance_logs (
-                id SERIAL PRIMARY KEY,
-                user_name TEXT NOT NULL,
-                timestamp TIMESTAMPTZ DEFAULT NOW()
-            );
-        """)
+       # Change this in get_user_by_email:
+cur.execute("""
+    SELECT id, name, email, password_hash, role   -- add password_hash
+    FROM users WHERE email = %s
+""", (email,))
 
         # INDEX for performance
         cur.execute("""
