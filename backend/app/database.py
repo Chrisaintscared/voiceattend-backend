@@ -21,7 +21,7 @@ def get_connection():
         if "sslmode" not in url:
             separator = "&" if "?" in url else "?"
             url = url + separator + "sslmode=require"
-        
+
         return psycopg2.connect(url)
     except Exception as e:
         print("❌ Connection failed:", e)
@@ -51,7 +51,7 @@ def init_db():
             );
         """)
 
-        # VOICE PROFILES (FIXED: UNIQUE + VECTOR READY)
+        # VOICE PROFILES
         cur.execute("""
             CREATE TABLE IF NOT EXISTS voice_profiles (
                 id SERIAL PRIMARY KEY,
@@ -61,11 +61,13 @@ def init_db():
         """)
 
         # ATTENDANCE LOGS
-       # Change this in get_user_by_email:
-cur.execute("""
-    SELECT id, name, email, password_hash, role   -- add password_hash
-    FROM users WHERE email = %s
-""", (email,))
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS attendance_logs (
+                id SERIAL PRIMARY KEY,
+                user_name TEXT NOT NULL,
+                timestamp TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
 
         # INDEX for performance
         cur.execute("""
@@ -93,15 +95,12 @@ def get_user_by_email(email: str):
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-
         cur.execute("""
-            SELECT id, name, email, role
+            SELECT id, name, email, password_hash, role
             FROM users
             WHERE email = %s
         """, (email,))
-
         return cur.fetchone()
-
     finally:
         conn.close()
 
@@ -110,16 +109,13 @@ def create_user(name: str, email: str, password_hash: str, role: str = "user"):
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-
         cur.execute("""
             INSERT INTO users (name, email, password_hash, role)
             VALUES (%s, %s, %s, %s)
             RETURNING id, name, email, role;
         """, (name, email, password_hash, role))
-
         conn.commit()
         return cur.fetchone()
-
     finally:
         conn.close()
 
@@ -128,89 +124,12 @@ def get_user_by_id(user_id: int):
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-
         cur.execute("""
             SELECT id, name, email, role
             FROM users
             WHERE id = %s
         """, (user_id,))
-
         return cur.fetchone()
-
-    finally:
-        conn.close()
-
-
-# ─────────────────────────────
-# VOICE PROFILE FUNCTIONS
-# ─────────────────────────────
-
-def save_voice_profile(user_id: int, embedding: str):
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-
-        cur.execute("""
-            INSERT INTO voice_profiles (user_id, embedding)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id)
-            DO UPDATE SET embedding = EXCLUDED.embedding
-            RETURNING *;
-        """, (user_id, embedding))
-
-        conn.commit()
-        return cur.fetchone()
-
-    finally:
-        conn.close()
-
-
-def get_voice_profile(user_id: int):
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-
-        cur.execute("""
-            SELECT * FROM voice_profiles
-            WHERE user_id = %s
-        """, (user_id,))
-
-        return cur.fetchone()
-
-    finally:
-        conn.close()
-
-
-def get_all_voice_profiles():
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-
-        cur.execute("SELECT * FROM voice_profiles")
-        return cur.fetchall()
-
-    finally:
-        conn.close()
-
-
-# ─────────────────────────────
-# ATTENDANCE
-# ─────────────────────────────
-
-def log_attendance(user_name: str):
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-
-        cur.execute("""
-            INSERT INTO attendance_logs (user_name)
-            VALUES (%s)
-            RETURNING *;
-        """, (user_name,))
-
-        conn.commit()
-        return cur.fetchone()
-
     finally:
         conn.close()
 
@@ -219,15 +138,12 @@ def list_all_users():
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-
         cur.execute("""
             SELECT id, name, email, role
             FROM users
             ORDER BY id DESC
         """)
-
         return cur.fetchall()
-
     finally:
         conn.close()
 
@@ -244,6 +160,73 @@ def delete_user(user_id: int):
         return cur.fetchone()
     finally:
         conn.close()
+
+
+# ─────────────────────────────
+# VOICE PROFILE FUNCTIONS
+# ─────────────────────────────
+
+def save_voice_profile(user_id: int, embedding: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            INSERT INTO voice_profiles (user_id, embedding)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id)
+            DO UPDATE SET embedding = EXCLUDED.embedding
+            RETURNING *;
+        """, (user_id, embedding))
+        conn.commit()
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def get_voice_profile(user_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM voice_profiles
+            WHERE user_id = %s
+        """, (user_id,))
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def get_all_voice_profiles():
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM voice_profiles")
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────
+# ATTENDANCE
+# ─────────────────────────────
+
+def save_attendance(user_name: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            INSERT INTO attendance_logs (user_name)
+            VALUES (%s)
+            RETURNING *;
+        """, (user_name,))
+        conn.commit()
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+# log_attendance is an alias kept for backwards compatibility
+log_attendance = save_attendance
 
 
 def get_all_logs(limit: int = 1000):
@@ -270,20 +253,5 @@ def get_logs_by_user(user_name: str):
             ORDER BY timestamp DESC
         """, (user_name,))
         return cur.fetchall()
-    finally:
-        conn.close()
-
-
-def save_attendance(user_name: str):
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("""
-            INSERT INTO attendance_logs (user_name)
-            VALUES (%s)
-            RETURNING *;
-        """, (user_name,))
-        conn.commit()
-        return cur.fetchone()
     finally:
         conn.close()
