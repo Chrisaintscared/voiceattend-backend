@@ -192,3 +192,14 @@ def log_attendance(user_name: str):
                 return cur.fetchone()
     finally:
         conn.close()
+
+
+def list_all_users():
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM users ORDER BY id DESC")
+                return cur.fetchall()
+    finally:
+        conn.close()
