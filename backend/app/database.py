@@ -239,8 +239,7 @@ def delete_user(user_id: int):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            DELETE FROM users
-            WHERE id = %s
+            DELETE FROM users WHERE id = %s
             RETURNING id, name, email, role;
         """, (user_id,))
         conn.commit()
@@ -259,5 +258,34 @@ def get_all_logs(limit: int = 1000):
             LIMIT %s
         """, (limit,))
         return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_logs_by_user(user_name: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM attendance_logs
+            WHERE user_name = %s
+            ORDER BY timestamp DESC
+        """, (user_name,))
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def save_attendance(user_name: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            INSERT INTO attendance_logs (user_name)
+            VALUES (%s)
+            RETURNING *;
+        """, (user_name,))
+        conn.commit()
+        return cur.fetchone()
     finally:
         conn.close()
