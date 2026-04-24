@@ -163,3 +163,16 @@ def log_attendance(user_name: str):
                 return cur.fetchone()
     finally:
         conn.close()
+
+
+
+
+def get_all_voice_profiles():
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM voice_profiles")
+                return cur.fetchall()
+    finally:
+        conn.close()
