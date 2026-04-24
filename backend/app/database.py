@@ -17,10 +17,12 @@ def get_connection():
         raise Exception("❌ DATABASE_URL not set")
 
     try:
-        # Supabase-safe connection
-        return psycopg2.connect(
-            DATABASE_URL + "?sslmode=require"
-        )
+        url = DATABASE_URL
+        if "sslmode" not in url:
+            separator = "&" if "?" in url else "?"
+            url = url + separator + "sslmode=require"
+        
+        return psycopg2.connect(url)
     except Exception as e:
         print("❌ Connection failed:", e)
         raise
