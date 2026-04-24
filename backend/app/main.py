@@ -1,8 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 import traceback
-import sys
 
 app = FastAPI(title="VoiceAttend AI", version="1.0.0")
 
@@ -17,28 +15,25 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     try:
-        print("▶ Importing database...")
         from app.database import init_db
-        print("▶ Running init_db...")
         init_db()
-        print("✅ init_db complete")
+        print("✅ DB initialized")
     except Exception as e:
-        print("❌ STARTUP FAILED:", e)
+        print("⚠️ DB init failed (non-fatal):", e)
         traceback.print_exc()
-        sys.exit(1)
 
+# import routes safely
 try:
-    print("▶ Importing routes...")
     from app.routes import auth, admin, attendance
-    print("✅ Routes imported")
-    app.include_router(auth.router)
-    app.include_router(admin.router,      prefix="/admin")
-    app.include_router(attendance.router, prefix="/attendance")
-    print("✅ Routes registered")
+
+    app.include_router(auth.router, prefix="/auth", tags=["auth"])
+    app.include_router(admin.router, prefix="/admin", tags=["admin"])
+    app.include_router(attendance.router, prefix="/attendance", tags=["attendance"])
+
+    print("✅ Routes loaded")
 except Exception as e:
-    print("❌ ROUTE IMPORT FAILED:", e)
+    print("❌ Route import failed:", e)
     traceback.print_exc()
-    sys.exit(1)
 
 @app.get("/")
 def root():
