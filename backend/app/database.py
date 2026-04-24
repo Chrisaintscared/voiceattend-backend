@@ -1,20 +1,21 @@
 """
-VoiceAttend AI - PostgreSQL Database Layer (FIXED FOR DEPLOYMENT)
+VoiceAttend AI - PostgreSQL Database Layer (FIXED FULL VERSION)
 """
 
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import datetime, timezone
 
-# 🔥 USE ENVIRONMENT VARIABLE (Render + Supabase)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
+# ─────────────────────────────
+# CONNECTION
+# ─────────────────────────────
 def get_connection():
     if not DATABASE_URL:
         raise Exception("DATABASE_URL not set")
-    
+
     return psycopg2.connect(DATABASE_URL)
 
 
@@ -49,10 +50,59 @@ def init_db():
                     CREATE TABLE IF NOT EXISTS attendance_logs (
                         id SERIAL PRIMARY KEY,
                         user_name TEXT NOT NULL,
-                        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        timestamp TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
 
-        print("[DB] Connected to cloud database")
+        print("[DB] Connected successfully")
+
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────
+# USER FUNCTIONS (FIXED)
+# ─────────────────────────────
+
+def get_user_by_email(email: str):
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM users WHERE email = %s",
+                    (email,)
+                )
+                return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def create_user(name: str, email: str, password_hash: str, role: str = "user"):
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    INSERT INTO users (name, email, password_hash, role)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING *;
+                """, (name, email, password_hash, role))
+
+                return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def get_user_by_id(user_id: int):
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM users WHERE id = %s",
+                    (user_id,)
+                )
+                return cur.fetchone()
     finally:
         conn.close()
