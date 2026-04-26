@@ -25,7 +25,7 @@ async def register(
     name:     str        = Form(...),
     email:    str        = Form(...),
     password: str        = Form(...),
-    voice:    UploadFile = File(...),
+    
 ):
     if get_user_by_email(email):
         raise HTTPException(status_code=409, detail="Email already registered")
