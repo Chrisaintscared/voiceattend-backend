@@ -3,7 +3,7 @@ import string
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.database import get_connection
-from app.routes.auth import get_current_user
+from app.security import get_current_user
 
 router = APIRouter()
 
@@ -31,7 +31,6 @@ def create_class(body: CreateClassRequest, user=Depends(get_current_user)):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        # Ensure unique code
         for _ in range(5):
             cur.execute("SELECT id FROM classes WHERE code = %s", (code,))
             if not cur.fetchone():
@@ -73,7 +72,6 @@ def join_class(body: JoinClassRequest, user=Depends(get_current_user)):
 
         class_id, class_name = cls
 
-        # Check already joined
         cur.execute("""
             SELECT id FROM class_members
             WHERE class_id = %s AND student_id = %s
@@ -86,7 +84,11 @@ def join_class(body: JoinClassRequest, user=Depends(get_current_user)):
             VALUES (%s, %s)
         """, (class_id, user['id']))
         conn.commit()
-        return {"message": f"Joined '{class_name}' successfully", "class_id": class_id, "class_name": class_name}
+        return {
+            "message": f"Joined '{class_name}' successfully",
+            "class_id": class_id,
+            "class_name": class_name
+        }
     finally:
         conn.close()
 
@@ -187,13 +189,15 @@ def checkin(class_id: int, user=Depends(get_current_user)):
     try:
         cur = conn.cursor()
 
-        # Verify student is in this class
         cur.execute("""
             SELECT id FROM class_members
             WHERE class_id = %s AND student_id = %s
         """, (class_id, user['id']))
         if not cur.fetchone():
-            raise HTTPException(status_code=403, detail="You are not a member of this class")
+            raise HTTPException(
+                status_code=403,
+                detail="You are not a member of this class"
+            )
 
         cur.execute("""
             INSERT INTO attendance_logs (user_name, class_id)
