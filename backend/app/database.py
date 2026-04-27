@@ -69,10 +69,48 @@ def init_db():
             );
         """)
 
+        # CLASSES TABLE
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS classes (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                code TEXT UNIQUE NOT NULL,
+                teacher_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+
+        # CLASS MEMBERS TABLE
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS class_members (
+                id SERIAL PRIMARY KEY,
+                class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+                student_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                joined_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(class_id, student_id)
+            );
+        """)
+
+        # Add class_id column to attendance_logs if not exists
+        cur.execute("""
+            ALTER TABLE attendance_logs
+            ADD COLUMN IF NOT EXISTS class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL;
+        """)
+
         # INDEX for performance
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_attendance_timestamp
             ON attendance_logs(timestamp);
+        """)
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_attendance_class
+            ON attendance_logs(class_id);
+        """)
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_class_members_class
+            ON class_members(class_id);
         """)
 
         conn.commit()
@@ -210,15 +248,15 @@ def get_all_voice_profiles():
 # ATTENDANCE
 # ─────────────────────────────
 
-def save_attendance(user_name: str):
+def save_attendance(user_name: str, class_id: int = None):
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            INSERT INTO attendance_logs (user_name)
-            VALUES (%s)
+            INSERT INTO attendance_logs (user_name, class_id)
+            VALUES (%s, %s)
             RETURNING *;
-        """, (user_name,))
+        """, (user_name, class_id))
         conn.commit()
         return cur.fetchone()
     finally:
@@ -252,6 +290,35 @@ def get_logs_by_user(user_name: str):
             WHERE user_name = %s
             ORDER BY timestamp DESC
         """, (user_name,))
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_logs_by_class(class_id: int, limit: int = 1000):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM attendance_logs
+            WHERE class_id = %s
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """, (class_id, limit))
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def get_logs_by_user_and_class(user_name: str, class_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT * FROM attendance_logs
+            WHERE user_name = %s AND class_id = %s
+            ORDER BY timestamp DESC
+        """, (user_name, class_id))
         return cur.fetchall()
     finally:
         conn.close()
