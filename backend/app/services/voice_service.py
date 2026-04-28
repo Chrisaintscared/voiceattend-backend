@@ -1,7 +1,6 @@
 """
 VoiceAttend AI - Real Voice Recognition Service
 Uses resemblyzer for speaker embedding extraction.
-Lightweight enough for Render free tier (CPU only).
 """
 
 import os
@@ -10,10 +9,6 @@ import tempfile
 import numpy as np
 
 from app.config import settings
-
-# ─────────────────────────────
-# LAZY LOAD ENCODER
-# ─────────────────────────────
 
 _encoder = None
 
@@ -27,28 +22,26 @@ def _get_encoder():
     return _encoder
 
 
-# ─────────────────────────────
-# EXTRACT EMBEDDING
-# ─────────────────────────────
-
 def extract_voice_embedding(audio_bytes: bytes) -> list:
-    """
-    Extract a 256-dim speaker embedding from raw audio bytes.
-    """
     import librosa
-    from resemblyzer import preprocess_wav
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(audio_bytes)
         tmp_path = f.name
 
     try:
+        # Load and resample to 16kHz mono
         wav, sr = librosa.load(tmp_path, sr=16000, mono=True)
 
         if len(wav) < 16000:
             raise ValueError("Audio too short — speak for at least 1 second")
 
-        wav = preprocess_wav(wav, source_sr=16000)
+        # Normalize
+        wav = wav / (np.max(np.abs(wav)) + 1e-9)
+
+        # Convert to float32
+        wav = wav.astype(np.float32)
+
         encoder = _get_encoder()
         embedding = encoder.embed_utterance(wav)
         return embedding.tolist()
@@ -60,15 +53,7 @@ def extract_voice_embedding(audio_bytes: bytes) -> list:
             pass
 
 
-# ─────────────────────────────
-# FIND BEST MATCH
-# ─────────────────────────────
-
 def find_best_match(query_embedding, profiles):
-    """
-    Compare query embedding against all stored profiles.
-    Uses cosine similarity — range 0 to 1.
-    """
     query = np.array(query_embedding)
     query = query / (np.linalg.norm(query) + 1e-9)
 
