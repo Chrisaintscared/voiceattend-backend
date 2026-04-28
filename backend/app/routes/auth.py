@@ -6,6 +6,8 @@ from app.database import (
     create_user,
     get_all_voice_profiles,
     get_user_by_id,
+    get_user_by_id_internal,
+    update_user_password,
 )
 from app.security import (
     hash_password,
@@ -32,6 +34,11 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 # ─────────────────────────────────────────────────────────────
@@ -127,3 +134,32 @@ async def voice_login(voice: UploadFile = File(...)):
             "confidence": round(score * 100, 1)
         }
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# CHANGE PASSWORD
+# ─────────────────────────────────────────────────────────────
+
+@router.post("/change-password")
+def change_password(
+    data: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    # get_current_user may return a safe user (no password_hash),
+    # so we re-fetch the full row for verification
+    full_user = get_user_by_id_internal(current_user["id"])
+    if not full_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not verify_password(data.current_password, full_user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    if len(data.new_password) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="New password must be at least 8 characters"
+        )
+
+    update_user_password(current_user["id"], hash_password(data.new_password))
+
+    return {"detail": "Password changed successfully"}
