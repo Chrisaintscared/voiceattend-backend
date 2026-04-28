@@ -13,7 +13,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# import routes safely
 try:
     from app.routes import auth, admin, attendance, classes, enroll
     app.include_router(auth.router,       prefix="/auth",       tags=["auth"])
@@ -26,9 +25,9 @@ except Exception as e:
     print("❌ Route import failed:", e)
     traceback.print_exc()
 
+
 @app.on_event("startup")
 async def startup():
-    # Init DB
     try:
         from app.database import init_db
         init_db()
@@ -37,7 +36,6 @@ async def startup():
         print("⚠️ DB init failed (non-fatal):", e)
         traceback.print_exc()
 
-    # Pre-load voice encoder in background thread so it doesn't block requests
     try:
         from app.services.voice_service import _get_encoder
         loop = asyncio.get_event_loop()
@@ -46,6 +44,7 @@ async def startup():
     except Exception as e:
         print("⚠️ Voice encoder pre-load failed (non-fatal):", e)
         traceback.print_exc()
+
 
 @app.get("/")
 def root():
