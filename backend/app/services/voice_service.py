@@ -2,12 +2,11 @@
 VoiceAttend AI - Real Voice Recognition Service
 Uses resemblyzer for speaker embedding extraction.
 """
-
 import os
 import json
 import tempfile
 import numpy as np
-
+from pathlib import Path
 from app.config import settings
 
 _encoder = None
@@ -23,24 +22,19 @@ def _get_encoder():
 
 
 def extract_voice_embedding(audio_bytes: bytes) -> list:
-    import librosa
+    from resemblyzer import preprocess_wav
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(audio_bytes)
         tmp_path = f.name
 
     try:
-        # Load and resample to 16kHz mono
-        wav, sr = librosa.load(tmp_path, sr=16000, mono=True)
+        # Use resemblyzer's own preprocessor to avoid librosa version conflicts
+        # preprocess_wav handles: resample to 16kHz, mono, normalize, float32
+        wav = preprocess_wav(Path(tmp_path))
 
         if len(wav) < 16000:
             raise ValueError("Audio too short — speak for at least 1 second")
-
-        # Normalize
-        wav = wav / (np.max(np.abs(wav)) + 1e-9)
-
-        # Convert to float32
-        wav = wav.astype(np.float32)
 
         encoder = _get_encoder()
         embedding = encoder.embed_utterance(wav)
@@ -65,8 +59,10 @@ def find_best_match(query_embedding, profiles):
             stored = p["embedding"]
             if isinstance(stored, str):
                 stored = json.loads(stored)
+
             emb = np.array(stored)
             emb = emb / (np.linalg.norm(emb) + 1e-9)
+
             score = float(np.dot(query, emb))
 
             if score > best_score:
