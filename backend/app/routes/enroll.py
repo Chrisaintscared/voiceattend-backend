@@ -1,9 +1,15 @@
+import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from app.security import get_current_user
 from app.services.voice_service import extract_voice_embedding
 from app.database import save_voice_profile, get_voice_profile
 
 router = APIRouter(tags=["enroll"])
+
+_executor = ThreadPoolExecutor(max_workers=1)
 
 
 @router.post("/enroll-voice")
@@ -22,7 +28,17 @@ async def enroll_voice(
         raise HTTPException(status_code=400, detail="Empty audio file")
 
     try:
-        embedding = extract_voice_embedding(audio_bytes)
+        # Run blocking voice processing in a thread so it doesn't freeze the event loop
+        loop = asyncio.get_event_loop()
+        embedding = await asyncio.wait_for(
+            loop.run_in_executor(_executor, extract_voice_embedding, audio_bytes),
+            timeout=30.0  # fail fast instead of hanging forever
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail="Voice processing timed out — please speak for 3-5 seconds and try again"
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -31,8 +47,7 @@ async def enroll_voice(
             detail=f"Voice processing failed: {e}"
         )
 
-    import json
-    profile = save_voice_profile(user["id"], json.dumps(embedding))
+    save_voice_profile(user["id"], json.dumps(embedding))
 
     return {
         "message": "Voice enrolled successfully",
