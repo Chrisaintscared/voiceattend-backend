@@ -22,19 +22,35 @@ def _get_encoder():
 
 
 def extract_voice_embedding(audio_bytes: bytes) -> list:
-    from resemblyzer import preprocess_wav
+    import soundfile as sf
+    from scipy.signal import resample_poly
+    from math import gcd
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(audio_bytes)
         tmp_path = f.name
 
     try:
-        # Use resemblyzer's own preprocessor to avoid librosa version conflicts
-        # preprocess_wav handles: resample to 16kHz, mono, normalize, float32
-        wav = preprocess_wav(Path(tmp_path))
+        # Load audio with soundfile (no librosa, avoids version conflicts)
+        wav, sr = sf.read(tmp_path, dtype="float32")
 
-        if len(wav) < 16000:
+        # Convert stereo to mono
+        if wav.ndim > 1:
+            wav = wav.mean(axis=1)
+
+        # Resample to 16kHz using scipy (avoids librosa.resample conflict)
+        target_sr = 16000
+        if sr != target_sr:
+            divisor = gcd(sr, target_sr)
+            wav = resample_poly(wav, target_sr // divisor, sr // divisor)
+
+        wav = wav.astype(np.float32)
+
+        if len(wav) < target_sr:  # less than 1 second
             raise ValueError("Audio too short — speak for at least 1 second")
+
+        # Normalize
+        wav = wav / (np.max(np.abs(wav)) + 1e-9)
 
         encoder = _get_encoder()
         embedding = encoder.embed_utterance(wav)
