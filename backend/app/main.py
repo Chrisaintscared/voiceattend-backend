@@ -14,12 +14,18 @@ app.add_middleware(
 
 try:
     from app.routes import auth, admin, attendance, classes, enroll
-    app.include_router(auth.router,       prefix="/auth",       tags=["auth"])
-    app.include_router(admin.router,      prefix="/admin",      tags=["admin"])
+
+    app.include_router(auth.router, prefix="/auth", tags=["auth"])
+    app.include_router(admin.router, prefix="/admin", tags=["admin"])
+
+    # ✅ FIXED: single prefix ONLY here
     app.include_router(attendance.router, prefix="/attendance", tags=["attendance"])
-    app.include_router(classes.router,    prefix="/classes",    tags=["classes"])
-    app.include_router(enroll.router,     prefix="/voice",      tags=["enroll"])
+
+    app.include_router(classes.router, prefix="/classes", tags=["classes"])
+    app.include_router(enroll.router, prefix="/voice", tags=["enroll"])
+
     print("✅ Routes loaded")
+
 except Exception as e:
     print("❌ Route import failed:", e)
     traceback.print_exc()
@@ -32,7 +38,7 @@ async def startup():
         init_db()
         print("✅ DB initialized")
     except Exception as e:
-        print("⚠️ DB init failed (non-fatal):", e)
+        print("⚠️ DB init failed:", e)
         traceback.print_exc()
 
 
