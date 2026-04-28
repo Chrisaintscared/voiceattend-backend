@@ -10,11 +10,11 @@ router = APIRouter(prefix="/attendance", tags=["attendance"])
 # ─────────────────────────────
 @router.get("/test")
 def test():
-    return {"status": "ok", "message": "attendance working"}
+    return {"status": "ok"}
 
 
 # ─────────────────────────────
-# CHECK-IN (VOICE UPLOAD)
+# VOICE CHECK-IN
 # ─────────────────────────────
 @router.post("/mark")
 async def mark_attendance(
@@ -22,20 +22,20 @@ async def mark_attendance(
     user=Depends(get_current_user)
 ):
     try:
-        # 🔥 DEBUG (important for your issue)
+        # DEBUG (IMPORTANT)
         print("USER:", user)
-        print("FILE:", audio.filename)
-        print("TYPE:", audio.content_type)
+        print("FILE NAME:", audio.filename)
+        print("CONTENT TYPE:", audio.content_type)
 
-        # ❌ AUTH GUARD
+        # AUTH CHECK
         if not user:
             raise HTTPException(status_code=401, detail="Not authenticated")
 
-        # ❌ FILE CHECK
+        # FILE CHECK
         if not audio:
             raise HTTPException(status_code=400, detail="No audio uploaded")
 
-        if not audio.content_type or not audio.content_type.startswith("audio"):
+        if not audio.content_type or "audio" not in audio.content_type:
             raise HTTPException(status_code=400, detail="Invalid audio file")
 
         # SAVE ATTENDANCE
@@ -49,7 +49,6 @@ async def mark_attendance(
         }
 
     except HTTPException as e:
-        # 🔥 IMPORTANT: show real error in Flutter
         raise e
 
     except Exception as e:
