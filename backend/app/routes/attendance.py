@@ -2,19 +2,20 @@ from fastapi import APIRouter, File, UploadFile, Depends, HTTPException
 from app.database import get_all_logs, get_logs_by_user, save_attendance
 from app.security import get_current_user
 
-router = APIRouter(prefix="/attendance", tags=["attendance"])
+# ❗ IMPORTANT: NO prefix here (fixes double /attendance/attendance issue)
+router = APIRouter()
 
 
 # ─────────────────────────────
-# TEST ROUTE
+# TEST
 # ─────────────────────────────
 @router.get("/test")
 def test():
-    return {"status": "ok"}
+    return {"status": "ok", "message": "attendance working"}
 
 
 # ─────────────────────────────
-# VOICE CHECK-IN
+# CHECK-IN (VOICE)
 # ─────────────────────────────
 @router.post("/mark")
 async def mark_attendance(
@@ -22,23 +23,19 @@ async def mark_attendance(
     user=Depends(get_current_user)
 ):
     try:
-        # DEBUG (IMPORTANT)
         print("USER:", user)
-        print("FILE NAME:", audio.filename)
-        print("CONTENT TYPE:", audio.content_type)
+        print("FILE:", audio.filename)
+        print("TYPE:", audio.content_type)
 
-        # AUTH CHECK
         if not user:
             raise HTTPException(status_code=401, detail="Not authenticated")
 
-        # FILE CHECK
         if not audio:
             raise HTTPException(status_code=400, detail="No audio uploaded")
 
         if not audio.content_type or "audio" not in audio.content_type:
             raise HTTPException(status_code=400, detail="Invalid audio file")
 
-        # SAVE ATTENDANCE
         log = save_attendance(user["name"])
 
         return {
