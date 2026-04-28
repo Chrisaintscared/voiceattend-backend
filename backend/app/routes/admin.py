@@ -1,13 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-
 from app.database import (
     list_all_users,
     delete_user,
     get_all_logs,
     get_connection
 )
-
 from app.security import require_admin
 
 router = APIRouter(tags=["admin"])
@@ -34,7 +32,6 @@ def list_users(admin=Depends(require_admin)):
 @router.delete("/users/{user_id}", status_code=204)
 def remove_user(user_id: str, admin=Depends(require_admin)):
     success = delete_user(user_id)
-
     if not success:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -44,7 +41,6 @@ def remove_user(user_id: str, admin=Depends(require_admin)):
 # ─────────────────────────────
 @router.put("/users/{user_id}/role")
 def update_role(user_id: str, body: RoleUpdate, admin=Depends(require_admin)):
-
     if body.role not in ("admin", "user"):
         raise HTTPException(status_code=400, detail="Invalid role")
 
@@ -56,10 +52,8 @@ def update_role(user_id: str, body: RoleUpdate, admin=Depends(require_admin)):
                     "UPDATE users SET role=%s WHERE id=%s",
                     (body.role, user_id)
                 )
-
                 if cur.rowcount == 0:
                     raise HTTPException(status_code=404, detail="User not found")
-
     finally:
         conn.close()
 
@@ -74,8 +68,5 @@ def update_role(user_id: str, body: RoleUpdate, admin=Depends(require_admin)):
 # ─────────────────────────────
 @router.get("/attendance")
 def get_attendance(limit: int = 100, admin=Depends(require_admin)):
-
     logs = get_all_logs()
-
-    # safe limit handling (prevents future bugs)
     return logs[:limit]
