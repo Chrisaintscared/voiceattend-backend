@@ -172,6 +172,21 @@ def get_user_by_id(user_id: int):
         conn.close()
 
 
+# Returns full row including password_hash — used internally for auth only
+def get_user_by_id_internal(user_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT id, name, email, password_hash, role
+            FROM users
+            WHERE id = %s
+        """, (user_id,))
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
 def list_all_users():
     conn = get_connection()
     try:
@@ -194,6 +209,22 @@ def delete_user(user_id: int):
             DELETE FROM users WHERE id = %s
             RETURNING id, name, email, role;
         """, (user_id,))
+        conn.commit()
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def update_user_password(user_id: int, new_hash: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            UPDATE users
+            SET password_hash = %s
+            WHERE id = %s
+            RETURNING id, name, email, role;
+        """, (new_hash, user_id))
         conn.commit()
         return cur.fetchone()
     finally:
