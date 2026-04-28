@@ -107,6 +107,8 @@ async def voice_login(voice: UploadFile = File(...)):
 
     try:
         query_emb = extract_voice_embedding(audio_bytes)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Voice processing failed: {exc}")
 
@@ -118,7 +120,10 @@ async def voice_login(voice: UploadFile = File(...)):
     match, score = find_best_match(query_emb, profiles)
 
     if not match:
-        raise HTTPException(status_code=401, detail=f"Voice not recognised (score: {score:.3f})")
+        raise HTTPException(
+            status_code=401,
+            detail=f"Voice not recognised (score: {score:.3f})"
+        )
 
     user = get_user_by_id(match["user_id"])
     token = create_access_token(str(user["id"]), user["role"])
@@ -127,5 +132,9 @@ async def voice_login(voice: UploadFile = File(...)):
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": safe_user
+        "user": safe_user,
+        "voice_match": {
+            "matched_name": user["name"],
+            "confidence": round(score * 100, 1)
+        }
     }
