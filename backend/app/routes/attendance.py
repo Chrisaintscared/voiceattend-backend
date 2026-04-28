@@ -10,14 +10,11 @@ router = APIRouter(prefix="/attendance", tags=["attendance"])
 # ─────────────────────────────
 @router.get("/test")
 def test():
-    return {
-        "status": "ok",
-        "message": "attendance router working"
-    }
+    return {"status": "ok", "message": "attendance working"}
 
 
 # ─────────────────────────────
-# CHECK-IN (VOICE AUDIO UPLOAD)
+# CHECK-IN (VOICE UPLOAD)
 # ─────────────────────────────
 @router.post("/mark")
 async def mark_attendance(
@@ -25,22 +22,23 @@ async def mark_attendance(
     user=Depends(get_current_user)
 ):
     try:
-        # DEBUG LOGS (keep during testing)
-        print("USERNAME:", user["name"])
-        print("FILENAME:", audio.filename)
-        print("CONTENT TYPE:", audio.content_type)
+        # 🔥 DEBUG (important for your issue)
+        print("USER:", user)
+        print("FILE:", audio.filename)
+        print("TYPE:", audio.content_type)
 
-        # Validate file
+        # ❌ AUTH GUARD
+        if not user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        # ❌ FILE CHECK
         if not audio:
             raise HTTPException(status_code=400, detail="No audio uploaded")
 
-        if not audio.content_type.startswith("audio"):
-            raise HTTPException(
-                status_code=400,
-                detail="Uploaded file must be audio"
-            )
+        if not audio.content_type or not audio.content_type.startswith("audio"):
+            raise HTTPException(status_code=400, detail="Invalid audio file")
 
-        # Save attendance
+        # SAVE ATTENDANCE
         log = save_attendance(user["name"])
 
         return {
@@ -50,21 +48,22 @@ async def mark_attendance(
             "log": log
         }
 
+    except HTTPException as e:
+        # 🔥 IMPORTANT: show real error in Flutter
+        raise e
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─────────────────────────────
-# LOGS (ALL USERS)
+# LOGS
 # ─────────────────────────────
 @router.get("/logs")
 def logs():
     return {"logs": get_all_logs()}
 
 
-# ─────────────────────────────
-# LOGS (BY USER)
-# ─────────────────────────────
 @router.get("/logs/{user_name}")
 def user_logs(user_name: str):
     return {
