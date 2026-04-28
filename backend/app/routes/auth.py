@@ -1,5 +1,4 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from app.database import (
@@ -8,31 +7,15 @@ from app.database import (
     get_all_voice_profiles,
     get_user_by_id,
 )
-from app.security import hash_password, verify_password, create_access_token, decode_access_token
+from app.security import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    decode_token,
+    get_current_user,
+)
 
 router = APIRouter(tags=["auth"])
-bearer_scheme = HTTPBearer()
-
-
-# ─────────────────────────────────────────────────────────────
-# GET CURRENT USER (used by other routes)
-# ─────────────────────────────────────────────────────────────
-
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
-    token = credentials.credentials
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
-    user = get_user_by_id(int(user_id))
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    return user
 
 
 # ─────────────────────────────────────────────────────────────
@@ -52,8 +35,9 @@ class LoginRequest(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────
-# REGISTER (NO VOICE)
+# REGISTER
 # ─────────────────────────────────────────────────────────────
+
 @router.post("/register", status_code=201)
 async def register(data: RegisterRequest):
     if get_user_by_email(data.email):
@@ -77,8 +61,9 @@ async def register(data: RegisterRequest):
 
 
 # ─────────────────────────────────────────────────────────────
-# LOGIN (EMAIL + PASSWORD)
+# LOGIN
 # ─────────────────────────────────────────────────────────────
+
 @router.post("/login")
 def login(data: LoginRequest):
     user = get_user_by_email(data.email)
@@ -99,26 +84,30 @@ def login(data: LoginRequest):
 # ─────────────────────────────────────────────────────────────
 # VOICE LOGIN
 # ─────────────────────────────────────────────────────────────
+
 @router.post("/voice-login")
 async def voice_login(voice: UploadFile = File(...)):
     from app.services.voice_service import extract_voice_embedding, find_best_match
 
     audio_bytes = await voice.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio file")
 
     try:
         query_emb = extract_voice_embedding(audio_bytes)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Voice processing failed: {exc}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Voice processing failed: {exc}"
+        )
 
     profiles = get_all_voice_profiles()
-
     if not profiles:
         raise HTTPException(status_code=404, detail="No voice profiles enrolled")
 
     match, score = find_best_match(query_emb, profiles)
-
     if not match:
         raise HTTPException(
             status_code=401,
