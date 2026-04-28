@@ -3,6 +3,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
+
 from app.security import get_current_user
 from app.services.voice_service import extract_voice_embedding
 from app.database import save_voice_profile, get_voice_profile
@@ -28,11 +29,10 @@ async def enroll_voice(
         raise HTTPException(status_code=400, detail="Empty audio file")
 
     try:
-        # Run blocking voice processing in a thread so it doesn't freeze the event loop
         loop = asyncio.get_event_loop()
         embedding = await asyncio.wait_for(
             loop.run_in_executor(_executor, extract_voice_embedding, audio_bytes),
-            timeout=30.0  # fail fast instead of hanging forever
+            timeout=30.0
         )
     except asyncio.TimeoutError:
         raise HTTPException(
