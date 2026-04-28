@@ -1,6 +1,7 @@
 """
 VoiceAttend AI - Lightweight Voice Recognition Service
-Uses MFCC features instead of resemblyzer for fast CPU inference.
+Uses MFCC features + cosine similarity for fast CPU inference.
+No torch or resemblyzer required.
 """
 import os
 import json
@@ -39,7 +40,7 @@ def extract_voice_embedding(audio_bytes: bytes) -> list:
         # Normalize
         wav = wav / (np.max(np.abs(wav)) + 1e-9)
 
-        # Extract MFCC embedding (fast, no torch needed)
+        # Extract MFCC embedding
         embedding = _extract_mfcc_embedding(wav, target_sr)
         return embedding.tolist()
 
@@ -77,9 +78,10 @@ def _extract_mfcc_embedding(wav: np.ndarray, sr: int, n_mfcc: int = 64) -> np.nd
     log_mel = np.log(mel_energy)
 
     # DCT to get MFCCs
+    from scipy.fftpack import dct
     mfcc = dct(log_mel, type=2, axis=1, norm="ortho")[:, :n_mfcc]
 
-    # Speaker embedding = mean + std across frames (fixed size: n_mfcc * 2)
+    # Speaker embedding = mean + std across frames
     embedding = np.concatenate([mfcc.mean(axis=0), mfcc.std(axis=0)])
 
     # L2 normalize
@@ -87,7 +89,7 @@ def _extract_mfcc_embedding(wav: np.ndarray, sr: int, n_mfcc: int = 64) -> np.nd
     return embedding.astype(np.float32)
 
 
-def _frame_signal(signal, frame_length, hop_length):
+def _frame_signal(signal: np.ndarray, frame_length: int, hop_length: int) -> np.ndarray:
     num_frames = 1 + (len(signal) - frame_length) // hop_length
     indices = (
         np.arange(frame_length)[None, :] +
@@ -96,10 +98,10 @@ def _frame_signal(signal, frame_length, hop_length):
     return signal[indices]
 
 
-def _mel_filterbank(sr, n_fft, n_mels, fmin=0.0, fmax=None):
+def _mel_filterbank(sr: int, n_fft: int, n_mels: int,
+                    fmin: float = 0.0, fmax: float = None) -> np.ndarray:
     if fmax is None:
         fmax = sr / 2.0
-    freqs = np.linspace(0, sr / 2, n_fft // 2 + 1)
 
     def hz_to_mel(f): return 2595 * np.log10(1 + f / 700)
     def mel_to_hz(m): return 700 * (10 ** (m / 2595) - 1)
@@ -113,7 +115,10 @@ def _mel_filterbank(sr, n_fft, n_mels, fmin=0.0, fmax=None):
     filters = np.zeros((n_mels, n_fft // 2 + 1))
 
     for m in range(1, n_mels + 1):
-        f_left, f_center, f_right = bins[m - 1], bins[m], bins[m + 1]
+        f_left   = bins[m - 1]
+        f_center = bins[m]
+        f_right  = bins[m + 1]
+
         for k in range(f_left, f_center):
             if f_center != f_left:
                 filters[m - 1, k] = (k - f_left) / (f_center - f_left)
@@ -124,12 +129,16 @@ def _mel_filterbank(sr, n_fft, n_mels, fmin=0.0, fmax=None):
     return filters
 
 
-def find_best_match(query_embedding, profiles):
+def find_best_match(query_embedding: list, profiles: list):
+    """
+    Compare query embedding against stored voice profiles.
+    Returns (best_profile, score) or (None, score) if below threshold.
+    """
     query = np.array(query_embedding)
     query = query / (np.linalg.norm(query) + 1e-9)
 
     best = None
-    best_score = -1
+    best_score = -1.0
 
     for p in profiles:
         try:
@@ -149,7 +158,7 @@ def find_best_match(query_embedding, profiles):
             print(f"⚠️ Skipping profile {p.get('user_id')}: {e}")
             continue
 
-    threshold = getattr(settings, 'voice_similarity_threshold', 0.75)
+    threshold = getattr(settings, "voice_similarity_threshold", 0.75)
 
     if best and best_score >= threshold:
         return best, best_score
