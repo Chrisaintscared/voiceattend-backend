@@ -4,7 +4,6 @@ Uses resemblyzer for speaker embedding extraction.
 Lightweight enough for Render free tier (CPU only).
 """
 
-import io
 import os
 import json
 import tempfile
@@ -12,10 +11,8 @@ import numpy as np
 
 from app.config import settings
 
-
 # ─────────────────────────────
 # LAZY LOAD ENCODER
-# (prevents slow startup crash on free tier)
 # ─────────────────────────────
 
 _encoder = None
@@ -37,19 +34,15 @@ def _get_encoder():
 def extract_voice_embedding(audio_bytes: bytes) -> list:
     """
     Extract a 256-dim speaker embedding from raw audio bytes.
-    Accepts wav, mp4, m4a, webm, ogg — converts via soundfile/librosa.
     """
     import librosa
     from resemblyzer import preprocess_wav
 
-    # Write to temp file so librosa can read it
-    suffix = ".wav"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(audio_bytes)
         tmp_path = f.name
 
     try:
-        # Load and resample to 16kHz mono (required by resemblyzer)
         wav, sr = librosa.load(tmp_path, sr=16000, mono=True)
 
         if len(wav) < 16000:
@@ -61,7 +54,10 @@ def extract_voice_embedding(audio_bytes: bytes) -> list:
         return embedding.tolist()
 
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 # ─────────────────────────────
@@ -71,7 +67,6 @@ def extract_voice_embedding(audio_bytes: bytes) -> list:
 def find_best_match(query_embedding, profiles):
     """
     Compare query embedding against all stored profiles.
-    Returns (best_profile, score) or (None, score).
     Uses cosine similarity — range 0 to 1.
     """
     query = np.array(query_embedding)
@@ -87,12 +82,12 @@ def find_best_match(query_embedding, profiles):
                 stored = json.loads(stored)
             emb = np.array(stored)
             emb = emb / (np.linalg.norm(emb) + 1e-9)
-
             score = float(np.dot(query, emb))
 
             if score > best_score:
                 best_score = score
                 best = p
+
         except Exception as e:
             print(f"⚠️ Skipping profile {p.get('user_id')}: {e}")
             continue
