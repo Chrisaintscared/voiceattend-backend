@@ -66,9 +66,12 @@ torch==2.2.2
 torchaudio==2.2.2
 
 # SpeechBrain — ECAPA-TDNN speaker verification model.
-# 1.0.x is the first stable release with the unified HuggingFace Hub loader
-# (SpeakerRecognition.from_hparams).
-speechbrain==1.0.0
+# 1.0.1 fixes a minor regression in from_hparams over 1.0.0.
+speechbrain==1.0.1
+
+# huggingface_hub — pinned to avoid breaking API changes in newer releases.
+# 0.23.0 is the last stable version fully compatible with speechbrain 1.0.x.
+huggingface_hub==0.23.0
 
 
 # -----------------------------------------------------------------------------
