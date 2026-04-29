@@ -4,18 +4,15 @@ from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
 load_dotenv()
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_connection():
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    """Initializes the database tables if they do not exist."""
     conn = get_connection()
     try:
         cur = conn.cursor()
-        # Table for Users
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -24,16 +21,10 @@ def init_db():
                 password TEXT NOT NULL,
                 role TEXT DEFAULT 'student'
             );
-        """)
-        # Table for Voice Profiles
-        cur.execute("""
             CREATE TABLE IF NOT EXISTS voice_profiles (
                 user_id INTEGER PRIMARY KEY REFERENCES users(id),
                 embedding FLOAT8[] NOT NULL
             );
-        """)
-        # Table for Attendance Logs
-        cur.execute("""
             CREATE TABLE IF NOT EXISTS attendance_logs (
                 id SERIAL PRIMARY KEY,
                 user_name TEXT NOT NULL,
@@ -46,7 +37,6 @@ def init_db():
         conn.close()
 
 def create_user(name, email, hashed_password, role="student"):
-    """Creates a new user in the database."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -75,6 +65,16 @@ def get_voice_profile(user_id):
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT embedding FROM voice_profiles WHERE user_id = %s", (user_id,))
         return cur.fetchone()
+    finally:
+        conn.close()
+
+# THIS WAS THE MISSING FUNCTION CAUSING THE ERROR
+def get_all_voice_profiles():
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT user_id, embedding FROM voice_profiles")
+        return cur.fetchall()
     finally:
         conn.close()
 
