@@ -9,7 +9,6 @@ Voice enrollment route.
 """
 
 import io
-import json
 import asyncio
 import logging
 import traceback
@@ -230,7 +229,7 @@ async def enroll_voice(
 
     # ── Persist ───────────────────────────────────────────────────────────────
     try:
-        save_voice_profile(user["id"], json.dumps(embedding))
+        save_voice_profile(user["id"], embedding)
     except Exception as exc:
         logger.error("DB write failed for user %s: %s", user["id"], exc)
         raise HTTPException(status_code=500, detail=f"Failed to save voice profile: {exc}")
