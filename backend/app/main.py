@@ -5,9 +5,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="VoiceAttend AI", version="1.0.0")
 
-# ---------------------------------------------------------------------------
-# CORS
-# ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,15 +14,14 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Routers — imported once at module level, NEVER inside request handlers.
-# Prefix lives HERE only; route files must NOT repeat the prefix.
+# Routers
+# Prefix lives HERE only — route files must NOT repeat the prefix.
 #
-#   Expected route shapes:
-#     /auth/...
-#     /admin/...
-#     /attendance/check-in   ← attendance.router has NO "/attendance" prefix
-#     /classes/...
-#     /voice/enroll          ← enroll.router has NO "/voice" prefix
+#   /auth/...
+#   /admin/...
+#   /attendance/check-in   ← attendance.router has NO "/attendance" prefix
+#   /classes/...
+#   /voice/enroll          ← enroll.router has NO "/voice" prefix
 # ---------------------------------------------------------------------------
 try:
     from app.routes import auth, admin, attendance, classes, enroll
@@ -43,13 +39,14 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
-# Startup — DB + ML model loaded ONCE here, stored in app.state.
-#
-# SpeechBrain ECAPA-TDNN is heavy; preloading avoids per-request cold cost
-# and keeps Render free-tier from timing out on the first real request.
+# Startup — DB init runs first, ML model second.
+# A model failure MUST NOT prevent the service from starting.
+# Routes check app.state.verifier is not None before running inference
+# and return HTTP 503 if the model is unavailable.
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def startup() -> None:
+
     # ── 1. Database ──────────────────────────────────────────────────────────
     try:
         from app.database import init_db
@@ -59,32 +56,45 @@ async def startup() -> None:
         print(f"❌ DB initialization failed: {e}")
         traceback.print_exc()
 
-    # ── 2. Speaker-verification model (SpeechBrain ECAPA-TDNN) ──────────────
-    # Loaded once into app.state.verifier so every route can reach it via
-    #   request.app.state.verifier
-    # without re-importing or re-instantiating.
-    app.state.verifier = None          # sentinel — always set before routes run
+    # ── 2. Speaker-verification model ────────────────────────────────────────
+    # Sentinel: always set before any request can arrive so routes never hit
+    # an AttributeError on app.state.verifier.
+    app.state.verifier = None
+
     try:
-        from speechbrain.pretrained import SpeakerRecognition
+        # FIX: speechbrain >= 1.0 moved SpeakerRecognition out of
+        # speechbrain.pretrained into speechbrain.inference.speaker.
+        # The old import path raises ModuleNotFoundError on Render.
+        from speechbrain.inference.speaker import SpeakerRecognition
 
         print("⏳ Loading speaker-verification model (ECAPA-TDNN) …")
+
         verifier = SpeakerRecognition.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
             savedir="pretrained_models/spkrec-ecapa-voxceleb",
             run_opts={"device": "cpu"},   # Render free tier has no GPU
         )
+
         app.state.verifier = verifier
         print("✅ Model loaded (SpeechBrain ECAPA-TDNN)")
-    except Exception as e:
-        # A missing model should not crash the whole service; routes that need
-        # it must check `request.app.state.verifier is not None`.
-        print(f"❌ Model loading failed: {e}")
+
+    except ModuleNotFoundError as e:
+        print(f"❌ Voice model import failed (check speechbrain version): {e}")
         traceback.print_exc()
+
+    except Exception as e:
+        print(f"❌ Voice model failed to load: {e}")
+        traceback.print_exc()
+
+    # app.state.verifier remains None if either except branch was hit.
+    # Routes return HTTP 503 when verifier is None (see enroll.py / attendance.py).
 
 
 # ---------------------------------------------------------------------------
-# Health-check — confirms both service liveness and model readiness.
+# Health check
 # Render's health-check URL should point here.
+# Returns model_loaded: false when the model failed to load so dashboards
+# and the Flutter app can surface a clear "service degraded" warning.
 # ---------------------------------------------------------------------------
 @app.get("/", tags=["health"])
 def root() -> dict:
