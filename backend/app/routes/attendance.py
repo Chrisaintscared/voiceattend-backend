@@ -54,9 +54,11 @@ def _load_and_preprocess(audio_bytes: bytes) -> np.ndarray:
     Identical pipeline to enroll.py so embeddings are comparable.
     """
     try:
+        import imageio_ffmpeg
         from pydub import AudioSegment
+        AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
     except ImportError as exc:
-        raise RuntimeError("pydub is not installed — add it to requirements.txt") from exc
+        raise RuntimeError("pydub or imageio-ffmpeg is not installed — add both to requirements.txt") from exc
 
     try:
         seg = AudioSegment.from_file(io.BytesIO(audio_bytes))
