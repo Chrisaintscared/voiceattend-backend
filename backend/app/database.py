@@ -13,18 +13,16 @@ def init_db():
     conn = get_connection()
     try:
         cur = conn.cursor()
+        # Ensure classes and enrollment tables exist
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                role TEXT DEFAULT 'student'
+                name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL, role TEXT DEFAULT 'student'
             );
             CREATE TABLE IF NOT EXISTS classes (
                 id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL, code TEXT UNIQUE NOT NULL,
                 teacher_id INTEGER REFERENCES users(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -49,6 +47,20 @@ def init_db():
     finally:
         conn.close()
 
+def create_user(name, email, hashed_password, role="student"):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "INSERT INTO users (name, email, password, role) VALUES (%s, %s, %s, %s) RETURNING id, name, email, role",
+            (name, email, hashed_password, role)
+        )
+        user = cur.fetchone()
+        conn.commit()
+        return user
+    finally:
+        conn.close()
+
 def get_user_by_email(email):
     conn = get_connection()
     try:
@@ -58,12 +70,22 @@ def get_user_by_email(email):
     finally:
         conn.close()
 
+# FIX FOR THE IMPORT ERROR
 def get_all_voice_profiles():
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT user_id, embedding FROM voice_profiles")
         return cur.fetchall()
+    finally:
+        conn.close()
+
+def get_voice_profile(user_id):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT embedding FROM voice_profiles WHERE user_id = %s", (user_id,))
+        return cur.fetchone()
     finally:
         conn.close()
 
