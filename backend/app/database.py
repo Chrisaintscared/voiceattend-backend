@@ -78,6 +78,16 @@ def get_user_by_email(email):
         conn.close()
 
 
+def get_user_by_id(user_id):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT id, name, email, role FROM users WHERE id = %s", (user_id,))
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
 def get_all_voice_profiles():
     conn = get_connection()
     try:
