@@ -85,8 +85,12 @@ scipy==1.11.4
 soundfile==0.12.1
 
 # pydub — format conversion (WebM / OGG / MP3 → WAV).
-# Requires ffmpeg at the OS level — add a packages.txt with "ffmpeg" on Render.
 pydub==0.25.1
+
+# imageio-ffmpeg — ships a static ffmpeg binary installable via pip.
+# Replaces the need for apt-get install ffmpeg (which fails on Render free tier).
+# Required for pydub to decode WebM/OGG/MP3 — the default format from Android Chrome.
+imageio-ffmpeg==0.5.1
 
 # librosa — optional resampling / feature extraction convenience layer.
 # Comment out if build time or slug size is a concern; torchaudio is sufficient.
