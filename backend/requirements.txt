@@ -1,13 +1,101 @@
+# =============================================================================
+# VoiceAttend AI — requirements.txt
+# Render free tier  |  Python 3.11
+#
+# Dependency group order:
+#   1. Web framework
+#   2. Database
+#   3. Auth / security
+#   4. ML core  (torch → torchaudio → speechbrain)
+#   5. Audio utilities
+#   6. Validation / config
+#   7. Dev utilities
+#
+# Notes:
+#   • torch 2.2.x is the latest stable release that ships a CPU-only wheel
+#     small enough for Render's free tier build time.  Pinning the minor
+#     version keeps torchaudio in lock-step (torchaudio==2.2.x requires
+#     torch==2.2.x exactly).
+#   • bcrypt is pinned to 4.0.1 — passlib 1.7.4's C-extension binding
+#     breaks on bcrypt ≥ 4.1 on some Render build images.  4.0.1 is the
+#     last version passlib officially supports without a wrapper shim.
+#   • numpy is pinned to <2.0 because speechbrain 1.x still depends on
+#     numpy 1.x APIs.  numpy 2.x introduced breaking changes.
+#   • librosa pulls in numba which is heavy; omit it if cold-start time
+#     matters more than resampling convenience — torchaudio covers all
+#     required resampling for ECAPA-TDNN.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 1. Web framework
+# -----------------------------------------------------------------------------
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
-psycopg2-binary==2.9.9
 python-multipart==0.0.9
+
+
+# -----------------------------------------------------------------------------
+# 2. Database
+# -----------------------------------------------------------------------------
+psycopg2-binary==2.9.9
+
+
+# -----------------------------------------------------------------------------
+# 3. Auth / security
+# -----------------------------------------------------------------------------
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-bcrypt==4.1.3
-numpy==1.26.4
+# bcrypt 4.0.1 is the last release fully compatible with passlib 1.7.4.
+# Do NOT upgrade to 4.1.x without also upgrading passlib.
+bcrypt==4.0.1
+
+
+# -----------------------------------------------------------------------------
+# 4. ML core  — install in this order to avoid solver backtracking
+# -----------------------------------------------------------------------------
+
+# PyTorch CPU-only build (no CUDA) — correct for Render free tier.
+# The --index-url trick below is the official way to pull the CPU wheel
+# without downloading the 2 GB CUDA variant.
+# If your build tool does not support --index-url in requirements.txt,
+# add the following line to a separate render-build.sh and call it from
+# your Render "Build Command":
+#   pip install torch==2.2.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2
+torchaudio==2.2.2
+
+# SpeechBrain — ECAPA-TDNN speaker verification model.
+# 1.0.x is the first stable release with the unified HuggingFace Hub loader
+# (SpeakerRecognition.from_hparams).
+speechbrain==1.0.0
+
+
+# -----------------------------------------------------------------------------
+# 5. Audio utilities
+# -----------------------------------------------------------------------------
+
+# numpy <2.0 required by speechbrain 1.x (numpy 2.x broke ndarray internals).
+numpy>=1.26.4,<2.0.0
+
+# scipy — signal processing helpers (resampling fallback, spectral features).
+scipy==1.11.4
+
+# soundfile — fast WAV / FLAC read-write via libsndfile.
+soundfile==0.12.1
+
+# pydub — format conversion (WebM / OGG / MP3 → WAV).
+# Requires ffmpeg at the OS level — add a packages.txt with "ffmpeg" on Render.
+pydub==0.25.1
+
+# librosa — optional resampling / feature extraction convenience layer.
+# Comment out if build time or slug size is a concern; torchaudio is sufficient.
+librosa==0.10.2
+
+
+# -----------------------------------------------------------------------------
+# 6. Validation / config
+# -----------------------------------------------------------------------------
 pydantic[email]==2.7.1
 pydantic-settings==2.2.1
 python-dotenv==1.0.1
-soundfile==0.12.1
-scipy==1.11.4
