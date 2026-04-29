@@ -1,259 +1,262 @@
 """
-VoiceAttend AI — app/database.py
-==================================
-All database helpers. Column name for the hashed password is `password_hash`
-throughout to match what auth.py expects.
+VoiceAttend AI — app/routes/auth.py
+====================================
+Authentication routes: register, login, voice-login, change-password.
 """
 
-import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from dotenv import load_dotenv
+from __future__ import annotations
 
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
+import logging
+from typing import Any
 
+import numpy as np
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from pydantic import BaseModel
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Connection
-# ─────────────────────────────────────────────────────────────────────────────
+from app.database import (
+    create_user,
+    get_all_voice_profiles,
+    get_user_by_email,
+    get_user_by_id,
+    get_user_by_id_internal,
+    update_user_password,
+)
+from app.security import (
+    create_access_token,
+    decode_token,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
 
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+log = logging.getLogger("voiceattend.auth")
 
+router = APIRouter(tags=["auth"])
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Schema
-# ─────────────────────────────────────────────────────────────────────────────
-
-def init_db():
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id            SERIAL PRIMARY KEY,
-                name          TEXT NOT NULL,
-                email         TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                role          TEXT DEFAULT 'student'
-            );
-
-            CREATE TABLE IF NOT EXISTS classes (
-                id         SERIAL PRIMARY KEY,
-                name       TEXT NOT NULL,
-                code       TEXT UNIQUE NOT NULL,
-                teacher_id INTEGER REFERENCES users(id),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS class_members (
-                id         SERIAL PRIMARY KEY,
-                class_id   INTEGER REFERENCES classes(id),
-                student_id INTEGER REFERENCES users(id),
-                joined_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (class_id, student_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS voice_profiles (
-                user_id   INTEGER PRIMARY KEY REFERENCES users(id),
-                embedding FLOAT8[] NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS attendance_logs (
-                id        SERIAL PRIMARY KEY,
-                user_id   INTEGER REFERENCES users(id),
-                user_name TEXT NOT NULL,
-                class_id  INTEGER REFERENCES classes(id),
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        conn.commit()
-    finally:
-        conn.close()
+VOICE_MATCH_THRESHOLD: float = 0.75
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Users
+# Request / Response models
 # ─────────────────────────────────────────────────────────────────────────────
 
-def create_user(name: str, email: str, password_hash: str, role: str = "student"):
-    """Insert a new user and return the full row (including password_hash)."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """INSERT INTO users (name, email, password_hash, role)
-               VALUES (%s, %s, %s, %s)
-               RETURNING id, name, email, password_hash, role""",
-            (name, email, password_hash, role),
+class RegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: str = "student"
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class DevResetRequest(BaseModel):
+    email: str
+    new_password: str
+    secret: str
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Internal helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _safe_user(user: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in user.items() if k != "password_hash"}
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    va = np.array(a, dtype=np.float32)
+    vb = np.array(b, dtype=np.float32)
+    norm_a = np.linalg.norm(va)
+    norm_b = np.linalg.norm(vb)
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return float(np.dot(va / norm_a, vb / norm_b))
+
+
+def _best_voice_match(
+    query_emb: list[float],
+    profiles: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, float]:
+    best_profile: dict[str, Any] | None = None
+    best_score: float = -1.0
+
+    for profile in profiles:
+        raw = profile.get("embedding")
+        if not raw:
+            continue
+        if isinstance(raw, str):
+            import json
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                log.warning("Skipping unparseable embedding for profile %s", profile.get("id"))
+                continue
+        score = _cosine_similarity(query_emb, raw)
+        if score > best_score:
+            best_score = score
+            best_profile = profile
+
+    if best_score >= VOICE_MATCH_THRESHOLD:
+        return best_profile, best_score
+    return None, best_score
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REGISTER
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/register", status_code=201)
+async def register(data: RegisterRequest):
+    if get_user_by_email(data.email):
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    user = create_user(
+        name=data.name,
+        email=data.email,
+        password_hash=hash_password(data.password),
+        role=data.role,
+    )
+
+    token = create_access_token(str(user["id"]), user["role"])
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": _safe_user(user),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LOGIN
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/login")
+def login(data: LoginRequest):
+    user = get_user_by_email(data.email)
+
+    if not user or not verify_password(data.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token(str(user["id"]), user["role"])
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": _safe_user(user),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VOICE LOGIN
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/voice-login")
+async def voice_login(
+    request: Request,
+    voice: UploadFile = File(...),
+):
+    verifier = getattr(request.app.state, "verifier", None)
+    if verifier is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice model is not ready. Please retry in a moment.",
         )
-        user = cur.fetchone()
-        conn.commit()
-        return user
-    finally:
-        conn.close()
 
+    audio_bytes = await voice.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio file")
 
-def get_user_by_email(email: str):
-    """Return the full user row (including password_hash) or None."""
-    conn = get_connection()
     try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT * FROM users WHERE email = %s", (email,))
-        return cur.fetchone()
-    finally:
-        conn.close()
+        from app.services.voice_service import extract_embedding_from_bytes
 
-
-def get_user_by_id(user_id: int):
-    """Return the full user row (including password_hash) or None."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-        return cur.fetchone()
-    finally:
-        conn.close()
-
-
-# Alias — auth.py imports both names
-get_user_by_id_internal = get_user_by_id
-
-
-def update_user_password(user_id: int, new_password_hash: str):
-    """Overwrite the stored password hash for a user."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE users SET password_hash = %s WHERE id = %s",
-            (new_password_hash, user_id),
+        query_emb: list[float] = extract_embedding_from_bytes(
+            audio_bytes=audio_bytes,
+            verifier=verifier,
         )
-        conn.commit()
-    finally:
-        conn.close()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        log.exception("Embedding extraction failed during voice-login")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Voice processing failed: {exc}",
+        )
+
+    profiles = get_all_voice_profiles()
+    if not profiles:
+        raise HTTPException(
+            status_code=404,
+            detail="No voice profiles enrolled yet",
+        )
+
+    best_profile, score = _best_voice_match(query_emb, profiles)
+
+    if best_profile is None:
+        log.info("Voice-login rejected — best cosine score %.4f < %.2f", score, VOICE_MATCH_THRESHOLD)
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f"Voice not recognised "
+                f"(similarity {score:.3f} < threshold {VOICE_MATCH_THRESHOLD})"
+            ),
+        )
+
+    user = get_user_by_id(best_profile["user_id"])
+    if not user:
+        raise HTTPException(status_code=404, detail="Matched user account not found")
+
+    token = create_access_token(str(user["id"]), user["role"])
+
+    log.info(
+        "Voice-login accepted — user_id=%s name=%s similarity=%.4f",
+        user["id"],
+        user.get("name"),
+        score,
+    )
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": _safe_user(user),
+        "voice_match": {
+            "matched_name": user["name"],
+            "confidence": round(score * 100, 2),
+            "similarity": round(score, 4),
+            "threshold": VOICE_MATCH_THRESHOLD,
+        },
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Voice profiles
+# CHANGE PASSWORD
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_all_voice_profiles():
-    """Return every (user_id, embedding) row — used by voice-login."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT user_id, embedding FROM voice_profiles")
-        return cur.fetchall()
-    finally:
-        conn.close()
+@router.post("/change-password")
+def change_password(
+    data: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    full_user = get_user_by_id_internal(current_user["id"])
+    if not full_user:
+        raise HTTPException(status_code=404, detail="User not found")
 
+    if not verify_password(data.current_password, full_user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
 
-def get_voice_profile(user_id: int):
-    """Return the embedding for one user, or None."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            "SELECT embedding FROM voice_profiles WHERE user_id = %s", (user_id,)
+    if len(data.new_password) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="New password must be at least 8 characters",
         )
-        return cur.fetchone()
-    finally:
-        conn.close()
 
+    update_user_password(current_user["id"], hash_password(data.new_password))
 
-def save_voice_profile(user_id: int, embedding):
-    """Upsert a voice embedding for a user."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """INSERT INTO voice_profiles (user_id, embedding)
-               VALUES (%s, %s)
-               ON CONFLICT (user_id)
-               DO UPDATE SET embedding = EXCLUDED.embedding
-               RETURNING user_id""",
-            (user_id, embedding),
-        )
-        result = cur.fetchone()
-        conn.commit()
-        return result
-    finally:
-        conn.close()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Enrollment
-# ─────────────────────────────────────────────────────────────────────────────
-
-def is_enrolled(class_id: int, student_id: int) -> bool:
-    """Return True if the student belongs to the class."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT id FROM class_members WHERE class_id = %s AND student_id = %s",
-            (class_id, student_id),
-        )
-        return cur.fetchone() is not None
-    finally:
-        conn.close()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Attendance
-# ─────────────────────────────────────────────────────────────────────────────
-
-def has_attendance_today(class_id: int, user_id: int) -> bool:
-    """Return True if the user already checked in for this class today."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            """SELECT id FROM attendance_logs
-               WHERE class_id = %s
-                 AND user_id   = %s
-                 AND timestamp::date = CURRENT_DATE""",
-            (class_id, user_id),
-        )
-        return cur.fetchone() is not None
-    finally:
-        conn.close()
-
-
-def save_attendance(user_id: int, user_name: str, class_id: int):
-    """Insert an attendance log row and return it."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """INSERT INTO attendance_logs (user_id, user_name, class_id)
-               VALUES (%s, %s, %s)
-               RETURNING *""",
-            (user_id, user_name, class_id),
-        )
-        conn.commit()
-        return cur.fetchone()
-    finally:
-        conn.close()
-
-
-def get_attendance_logs(user_id=None, class_id=None):
-    """Fetch logs filtered by user and/or class, newest first."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        query = "SELECT * FROM attendance_logs WHERE 1=1"
-        params = []
-        if user_id is not None:
-            query += " AND user_id = %s"
-            params.append(user_id)
-        if class_id is not None:
-            query += " AND class_id = %s"
-            params.append(class_id)
-        query += " ORDER BY timestamp DESC"
-        cur.execute(query, params)
-        return cur.fetchall()
-    finally:
-        conn.close()
+    return {"detail": "Password changed successfully"}
