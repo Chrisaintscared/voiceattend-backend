@@ -1,84 +1,56 @@
-import io
-import asyncio
-import logging
-import traceback
-import gc
-import ctypes
+import io, asyncio, logging, traceback, gc, ctypes
 from concurrent.futures import ThreadPoolExecutor
-
 import numpy as np
 import torch
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, Depends
-
-from app.database import save_attendance, get_voice_profile, get_all_logs, get_logs_by_user
+from app.database import save_attendance, get_voice_profile
 from app.security import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["attendance"])
 _executor = ThreadPoolExecutor(max_workers=1)
 
-# ── Config ──────────────────────────────────────────────────────────────────
-# TIGHTENED: Increased from 0.85 to 0.90 to stop false positives
-SIMILARITY_THRESHOLD = 0.90 
-TARGET_SR            = 16_000
-# REJECT SILENCE: Same threshold as enrollment
+SIMILARITY_THRESHOLD = 0.72 # Optimized for X-Vector
+TARGET_SR = 16_000
 ENERGY_SILENCE_THRESH = 0.005
 
 def trim_memory():
     try:
         libc = ctypes.CDLL("libc.so.6")
         libc.malloc_trim(0)
-    except Exception: pass
-
-def _load_and_preprocess(audio_bytes: bytes) -> np.ndarray:
-    try:
-        from pydub import AudioSegment
-        import imageio_ffmpeg
-        AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
-        seg = AudioSegment.from_file(io.BytesIO(audio_bytes))
-        seg = seg.set_channels(1).set_frame_rate(TARGET_SR).set_sample_width(2)
-        samples = np.frombuffer(seg.raw_data, dtype=np.int16).astype(np.float32)
-        return samples / 32768.0
-    except Exception as exc:
-        raise ValueError(f"Could not decode audio: {exc}")
+    except: pass
 
 def _extract_embedding(audio_bytes: bytes, verifier) -> np.ndarray:
-    samples = _load_and_preprocess(audio_bytes)
+    from pydub import AudioSegment
+    seg = AudioSegment.from_file(io.BytesIO(audio_bytes))
+    seg = seg.set_channels(1).set_frame_rate(TARGET_SR).set_sample_width(2)
+    samples = np.frombuffer(seg.raw_data, dtype=np.int16).astype(np.float32) / 32768.0
     
-    # ── Silence Check ──
-    rms = float(np.sqrt(np.mean(samples**2)))
-    if rms < ENERGY_SILENCE_THRESH:
-        raise ValueError("Audio is silent. Please speak clearly.")
-
-    wav_tensor = torch.tensor(samples).unsqueeze(0)
-    wav_lens = torch.tensor([1.0])
+    if float(np.sqrt(np.mean(samples**2))) < ENERGY_SILENCE_THRESH:
+        raise ValueError("Silent audio.")
 
     with torch.no_grad():
-        embedding = verifier.encode_batch(wav_tensor, wav_lens)
-
+        embedding = verifier.encode_batch(torch.tensor(samples).unsqueeze(0), torch.tensor([1.0]))
+    
     emb_np = embedding.squeeze().cpu().numpy()
     return emb_np / np.linalg.norm(emb_np)
 
-def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.dot(a, b))
-
 @router.post("/mark")
-async def mark_attendance(request: Request, audio: UploadFile = File(...), user=Depends(get_current_user)):
-    audio_bytes = None
+async def mark_attendance(audio: UploadFile = File(...), user=Depends(get_current_user)):
     verifier = None
-    
     try:
-        stored_profile = get_voice_profile(user["id"])
-        if not stored_profile:
-            raise HTTPException(status_code=400, detail="Voice not enrolled.")
+        stored = get_voice_profile(user["id"])
+        if not stored: raise HTTPException(status_code=400, detail="No profile")
+
+        # ── PRE-LOAD CLEANUP ──
+        gc.collect()
+        trim_memory()
 
         from speechbrain.inference.speaker import SpeakerRecognition
-        logger.info("⏳ Loading model for check-in...")
-        
         verifier = SpeakerRecognition.from_hparams(
-            source="speechbrain/spkrec-ecapa-voxceleb",
-            savedir="pretrained_models/spkrec-ecapa-voxceleb",
-            run_opts={"device": "cpu"},
+            source="speechbrain/spkrec-xvect-voxceleb", # LIGHTWEIGHT MODEL
+            savedir="pretrained_models/spkrec-xvect",
+            run_opts={"device": "cpu"}
         )
 
         audio_bytes = await audio.read()
@@ -88,22 +60,16 @@ async def mark_attendance(request: Request, audio: UploadFile = File(...), user=
             timeout=45.0
         )
 
-        stored_emb = np.array(stored_profile["embedding"], dtype=np.float32)
-        similarity = _cosine_similarity(live_emb, stored_emb)
-
+        similarity = float(np.dot(live_emb, np.array(stored["embedding"])))
         if similarity < SIMILARITY_THRESHOLD:
-            logger.warning(f"Mismatch for {user['id']} (Score: {similarity:.4f})")
-            raise HTTPException(status_code=401, detail=f"Voice mismatch ({similarity:.4f})")
+            raise HTTPException(status_code=401, detail=f"Mismatch ({similarity:.2f})")
 
-        attendance_log = save_attendance(user["name"])
-        return {"status": "success", "confidence": round(similarity, 4), "log": attendance_log}
+        return {"status": "success", "score": round(similarity, 4), "log": save_attendance(user["name"])}
 
-    except HTTPException: raise
     except Exception as e:
-        logger.error(f"Attendance error: {traceback.format_exc()}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if verifier: del verifier
-        if audio_bytes: del audio_bytes
+        del verifier
         gc.collect()
         trim_memory()
