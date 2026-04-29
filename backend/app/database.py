@@ -1,3 +1,10 @@
+"""
+VoiceAttend AI — app/database.py
+==================================
+All database helpers. Column name for the hashed password is `password_hash`
+throughout to match what auth.py expects.
+"""
+
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -7,9 +14,17 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Connection
+# ─────────────────────────────────────────────────────────────────────────────
+
 def get_connection():
     return psycopg2.connect(DATABASE_URL)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Schema
+# ─────────────────────────────────────────────────────────────────────────────
 
 def init_db():
     conn = get_connection()
@@ -17,34 +32,39 @@ def init_db():
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                role TEXT DEFAULT 'student'
+                id            SERIAL PRIMARY KEY,
+                name          TEXT NOT NULL,
+                email         TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role          TEXT DEFAULT 'student'
             );
+
             CREATE TABLE IF NOT EXISTS classes (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                code TEXT UNIQUE NOT NULL,
+                id         SERIAL PRIMARY KEY,
+                name       TEXT NOT NULL,
+                code       TEXT UNIQUE NOT NULL,
                 teacher_id INTEGER REFERENCES users(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
             CREATE TABLE IF NOT EXISTS class_members (
-                id SERIAL PRIMARY KEY,
-                class_id INTEGER REFERENCES classes(id),
+                id         SERIAL PRIMARY KEY,
+                class_id   INTEGER REFERENCES classes(id),
                 student_id INTEGER REFERENCES users(id),
-                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                joined_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (class_id, student_id)
             );
+
             CREATE TABLE IF NOT EXISTS voice_profiles (
-                user_id INTEGER PRIMARY KEY REFERENCES users(id),
+                user_id   INTEGER PRIMARY KEY REFERENCES users(id),
                 embedding FLOAT8[] NOT NULL
             );
+
             CREATE TABLE IF NOT EXISTS attendance_logs (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id),
+                id        SERIAL PRIMARY KEY,
+                user_id   INTEGER REFERENCES users(id),
                 user_name TEXT NOT NULL,
-                class_id INTEGER REFERENCES classes(id),
+                class_id  INTEGER REFERENCES classes(id),
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -53,13 +73,20 @@ def init_db():
         conn.close()
 
 
-def create_user(name, email, hashed_password, role="student"):
+# ─────────────────────────────────────────────────────────────────────────────
+# Users
+# ─────────────────────────────────────────────────────────────────────────────
+
+def create_user(name: str, email: str, password_hash: str, role: str = "student"):
+    """Insert a new user and return the full row (including password_hash)."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
-            "INSERT INTO users (name, email, password, role) VALUES (%s, %s, %s, %s) RETURNING id, name, email, role",
-            (name, email, hashed_password, role),
+            """INSERT INTO users (name, email, password_hash, role)
+               VALUES (%s, %s, %s, %s)
+               RETURNING id, name, email, password_hash, role""",
+            (name, email, password_hash, role),
         )
         user = cur.fetchone()
         conn.commit()
@@ -68,7 +95,8 @@ def create_user(name, email, hashed_password, role="student"):
         conn.close()
 
 
-def get_user_by_email(email):
+def get_user_by_email(email: str):
+    """Return the full user row (including password_hash) or None."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -78,17 +106,41 @@ def get_user_by_email(email):
         conn.close()
 
 
-def get_user_by_id(user_id):
+def get_user_by_id(user_id: int):
+    """Return the full user row (including password_hash) or None."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT id, name, email, role FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
         return cur.fetchone()
     finally:
         conn.close()
 
 
+# Alias — auth.py imports both names
+get_user_by_id_internal = get_user_by_id
+
+
+def update_user_password(user_id: int, new_password_hash: str):
+    """Overwrite the stored password hash for a user."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET password_hash = %s WHERE id = %s",
+            (new_password_hash, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Voice profiles
+# ─────────────────────────────────────────────────────────────────────────────
+
 def get_all_voice_profiles():
+    """Return every (user_id, embedding) row — used by voice-login."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -98,7 +150,8 @@ def get_all_voice_profiles():
         conn.close()
 
 
-def get_voice_profile(user_id):
+def get_voice_profile(user_id: int):
+    """Return the embedding for one user, or None."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -110,14 +163,16 @@ def get_voice_profile(user_id):
         conn.close()
 
 
-def save_voice_profile(user_id, embedding):
+def save_voice_profile(user_id: int, embedding):
+    """Upsert a voice embedding for a user."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """INSERT INTO voice_profiles (user_id, embedding)
                VALUES (%s, %s)
-               ON CONFLICT (user_id) DO UPDATE SET embedding = EXCLUDED.embedding
+               ON CONFLICT (user_id)
+               DO UPDATE SET embedding = EXCLUDED.embedding
                RETURNING user_id""",
             (user_id, embedding),
         )
@@ -128,8 +183,12 @@ def save_voice_profile(user_id, embedding):
         conn.close()
 
 
-def is_enrolled(class_id, student_id):
-    """Returns True if the student is a member of the given class."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Enrollment
+# ─────────────────────────────────────────────────────────────────────────────
+
+def is_enrolled(class_id: int, student_id: int) -> bool:
+    """Return True if the student belongs to the class."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -142,15 +201,20 @@ def is_enrolled(class_id, student_id):
         conn.close()
 
 
-def has_attendance_today(class_id, user_id):
-    """Returns True if the user already has an attendance log for today in this class."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Attendance
+# ─────────────────────────────────────────────────────────────────────────────
+
+def has_attendance_today(class_id: int, user_id: int) -> bool:
+    """Return True if the user already checked in for this class today."""
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
             """SELECT id FROM attendance_logs
-               WHERE class_id = %s AND user_id = %s
-               AND timestamp::date = CURRENT_DATE""",
+               WHERE class_id = %s
+                 AND user_id   = %s
+                 AND timestamp::date = CURRENT_DATE""",
             (class_id, user_id),
         )
         return cur.fetchone() is not None
@@ -158,13 +222,15 @@ def has_attendance_today(class_id, user_id):
         conn.close()
 
 
-def save_attendance(user_id, user_name, class_id):
+def save_attendance(user_id: int, user_name: str, class_id: int):
+    """Insert an attendance log row and return it."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """INSERT INTO attendance_logs (user_id, user_name, class_id)
-               VALUES (%s, %s, %s) RETURNING *""",
+               VALUES (%s, %s, %s)
+               RETURNING *""",
             (user_id, user_name, class_id),
         )
         conn.commit()
@@ -174,7 +240,7 @@ def save_attendance(user_id, user_name, class_id):
 
 
 def get_attendance_logs(user_id=None, class_id=None):
-    """Fetch attendance logs, optionally filtered by user and/or class."""
+    """Fetch logs filtered by user and/or class, newest first."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -188,6 +254,50 @@ def get_attendance_logs(user_id=None, class_id=None):
             params.append(class_id)
         query += " ORDER BY timestamp DESC"
         cur.execute(query, params)
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Admin & Management Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def list_all_users():
+    """Returns all users for the admin management panel (no password_hash)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT id, name, email, role FROM users ORDER BY id DESC")
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def delete_user(user_id: int) -> bool:
+    """Deletes a user and returns True if a row was actually removed."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        success = cur.rowcount > 0
+        conn.commit()
+        return success
+    finally:
+        conn.close()
+
+
+def get_all_logs():
+    """Returns every attendance log in the system (Admin view)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT l.id, l.user_name, l.timestamp, c.name AS class_name
+            FROM attendance_logs l
+            JOIN classes c ON l.class_id = c.id
+            ORDER BY l.timestamp DESC
+        """)
         return cur.fetchall()
     finally:
         conn.close()
