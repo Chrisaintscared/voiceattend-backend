@@ -29,7 +29,7 @@ router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=1)
 
 # ── Verification config ──────────────────────────────────────────────────────
-SIMILARITY_THRESHOLD = 0.75   # cosine similarity — tune as needed
+SIMILARITY_THRESHOLD = 0.85   # cosine similarity — tune as needed
 TARGET_SR            = 16_000 # Hz  — must match enroll.py
 MIN_DURATION_SEC     = 2.0    # seconds
 ENERGY_SILENCE_THRESH = 1e-4  # RMS floor
@@ -253,6 +253,7 @@ async def mark_attendance(
 
     if similarity < SIMILARITY_THRESHOLD:
         logger.warning(
+            
             "Voice not recognised for user %s (similarity=%.4f)", user["id"], similarity
         )
         raise HTTPException(
