@@ -262,22 +262,3 @@ def change_password(
     return {"detail": "Password changed successfully"}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TEMP: DEV PASSWORD RESET — DELETE THIS ENDPOINT AFTER USE
-# ─────────────────────────────────────────────────────────────────────────────
-
-@router.post("/dev-reset-password")
-def dev_reset_password(data: DevResetRequest):
-    if data.secret != "voiceattend-dev-2026":
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    user = get_user_by_email(data.email)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if len(data.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-
-    update_user_password(user["id"], hash_password(data.new_password))
-
-    return {"detail": f"Password reset for {data.email}. Delete this endpoint now!"}
