@@ -10,31 +10,22 @@ import numpy as np
 import torch
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, Depends
 
-from app.database import get_all_logs, get_logs_by_user, save_attendance, get_voice_profile
+from app.database import save_attendance, get_voice_profile, get_all_logs, get_logs_by_user
 from app.security import get_current_user
 
 logger = logging.getLogger(__name__)
+router = APIRouter(tags=["attendance"])
 
-# ── Router & Execution ──────────────────────────────────────────────────────
-router = APIRouter()
+# One worker thread to prevent CPU/RAM competition on Render
 _executor = ThreadPoolExecutor(max_workers=1)
 
-# ── Verification Config ──────────────────────────────────────────────────────
+# ── Config ──────────────────────────────────────────────────────────────────
 SIMILARITY_THRESHOLD = 0.85
 TARGET_SR            = 16_000
-MIN_DURATION_SEC     = 2.0
-ENERGY_SILENCE_THRESH = 1e-4
-
-ALLOWED_CONTENT_TYPES = {
-    "audio/wav", "audio/x-wav", "audio/wave",
-    "audio/webm", "audio/ogg",
-    "audio/mpeg", "audio/mp3",
-    "audio/flac", "audio/x-flac",
-}
 
 # ── Memory Helper ──────────────────────────────────────────────────────────
 def trim_memory():
-    """Explicitly tell the OS to reclaim memory from the Python process."""
+    """Forces the Linux kernel to reclaim unused memory from the process."""
     try:
         libc = ctypes.CDLL("libc.so.6")
         libc.malloc_trim(0)
@@ -59,14 +50,10 @@ def _load_and_preprocess(audio_bytes: bytes) -> np.ndarray:
         raise ValueError(f"Could not decode audio: {exc}")
 
 def _extract_embedding(audio_bytes: bytes, verifier) -> np.ndarray:
+    """Runs inside the executor to handle heavy ML math."""
     samples = _load_and_preprocess(audio_bytes)
     
-    # Validate length
-    duration = len(samples) / TARGET_SR
-    if duration < MIN_DURATION_SEC:
-        raise ValueError(f"Audio too short ({duration:.1f}s). Need at least {MIN_DURATION_SEC}s.")
-
-    # Convert to Tensor for SpeechBrain/Torch
+    # Inference
     wav_tensor = torch.tensor(samples).unsqueeze(0)
     wav_lens = torch.tensor([1.0])
 
@@ -75,10 +62,10 @@ def _extract_embedding(audio_bytes: bytes, verifier) -> np.ndarray:
 
     emb_np = embedding.squeeze().cpu().numpy()
     
-    # L2 Normalization
+    # L2 Normalisation
     norm = np.linalg.norm(emb_np)
     if norm < 1e-10:
-        raise ValueError("Invalid audio signal (silent or zero-vector).")
+        raise ValueError("Invalid audio signal.")
     
     return emb_np / norm
 
@@ -87,10 +74,6 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 # ── Routes ─────────────────────────────────────────────────────────────────
 
-@router.get("/test")
-def test():
-    return {"status": "ok", "message": "Attendance route is reachable."}
-
 @router.post("/mark")
 async def mark_attendance(
     request: Request,
@@ -98,39 +81,46 @@ async def mark_attendance(
     user=Depends(get_current_user),
 ):
     audio_bytes = None
+    verifier = None
+    
     try:
-        # 1. Model Guard
-        verifier = getattr(request.app.state, "verifier", None)
-        if verifier is None:
-            raise HTTPException(status_code=503, detail="Speaker model is warming up...")
-
-        # 2. Enrollment Guard
+        # 1. Verification Guard: Check if user has a profile BEFORE loading model
         stored_profile = get_voice_profile(user["id"])
         if not stored_profile:
             raise HTTPException(status_code=400, detail="Voice not enrolled.")
 
-        # 3. Read Audio Data
+        # 2. LOAD MODEL ON-DEMAND
+        from speechbrain.inference.speaker import SpeakerRecognition
+        logger.info("⏳ Loading ECAPA-TDNN for check-in...")
+        
+        verifier = SpeakerRecognition.from_hparams(
+            source="speechbrain/spkrec-ecapa-voxceleb",
+            savedir="pretrained_models/spkrec-ecapa-voxceleb",
+            run_opts={"device": "cpu"},
+        )
+
+        # 3. Read incoming audio
         audio_bytes = await audio.read()
         
-        # 4. Extract Embedding (Runs in ThreadPool to keep FastAPI responsive)
+        # 4. Extract Embedding (Offloaded to ThreadPool)
         loop = asyncio.get_event_loop()
         live_emb = await asyncio.wait_for(
             loop.run_in_executor(_executor, _extract_embedding, audio_bytes, verifier),
-            timeout=25.0
+            timeout=45.0
         )
 
-        # 5. Calculate Similarity
+        # 5. Compare against stored profile
         stored_emb = np.array(stored_profile["embedding"], dtype=np.float32)
         similarity = _cosine_similarity(live_emb, stored_emb)
 
         if similarity < SIMILARITY_THRESHOLD:
-            logger.warning(f"Voice mismatch for {user['id']} (Score: {similarity:.4f})")
+            logger.warning(f"Mismatch for {user['id']} (Score: {similarity:.4f})")
             raise HTTPException(
                 status_code=401, 
                 detail=f"Voice mismatch (Score: {similarity:.4f})"
             )
 
-        # 6. Success
+        # 6. Log Success
         attendance_log = save_attendance(user["name"])
         return {
             "status": "success",
@@ -141,15 +131,18 @@ async def mark_attendance(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        logger.error(f"Attendance error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
     finally:
-        # 🧹 CRITICAL CLEANUP: Force Render to reclaim RAM
-        del audio_bytes
+        # 🧹 AGGRESSIVE RAM RECLAMATION
+        if verifier:
+            del verifier
+        if audio_bytes:
+            del audio_bytes
         gc.collect()
         trim_memory()
-        logger.info("RAM cleanup complete after request.")
+        logger.info("✅ Attendance RAM cleared.")
 
 @router.get("/logs")
 def logs():
