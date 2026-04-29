@@ -9,7 +9,6 @@ Attendance check-in route with REAL speaker verification.
 """
 
 import io
-import json
 import asyncio
 import logging
 import traceback
@@ -223,14 +222,15 @@ async def mark_attendance(
         )
 
     # ── 6. Load & re-normalise stored embedding ───────────────────────────────
+    # get_voice_profile() returns a dict with embedding as List[float].
+    # No json.loads() needed — the DB layer handles deserialisation.
     try:
-        stored_list = json.loads(stored_profile)
-        stored_emb  = np.array(stored_list, dtype=np.float32)
+        stored_emb  = np.array(stored_profile["embedding"], dtype=np.float32)
         stored_norm = np.linalg.norm(stored_emb)
         if stored_norm > 1e-10:
             stored_emb = stored_emb / stored_norm          # defensive re-normalise
     except Exception as exc:
-        logger.error("Failed to deserialise stored embedding for user %s: %s", user["id"], exc)
+        logger.error("Failed to load stored embedding for user %s: %s", user["id"], exc)
         raise HTTPException(
             status_code=500,
             detail="Stored voice profile is corrupt. Please re-enroll.",
