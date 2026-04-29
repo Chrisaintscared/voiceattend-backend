@@ -97,7 +97,7 @@ imageio-ffmpeg==0.5.1
 
 # librosa — optional resampling / feature extraction convenience layer.
 # Comment out if build time or slug size is a concern; torchaudio is sufficient.
-librosa==0.10.2
+
 
 
 # -----------------------------------------------------------------------------
