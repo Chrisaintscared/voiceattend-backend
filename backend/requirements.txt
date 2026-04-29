@@ -1,108 +1,30 @@
-# =============================================================================
-# VoiceAttend AI — requirements.txt
-# Render free tier  |  Python 3.11
-#
-# Dependency group order:
-#   1. Web framework
-#   2. Database
-#   3. Auth / security
-#   4. ML core  (torch → torchaudio → speechbrain)
-#   5. Audio utilities
-#   6. Validation / config
-#   7. Dev utilities
-#
-# Notes:
-#   • torch 2.2.x is the latest stable release that ships a CPU-only wheel
-#     small enough for Render's free tier build time.  Pinning the minor
-#     version keeps torchaudio in lock-step (torchaudio==2.2.x requires
-#     torch==2.2.x exactly).
-#   • bcrypt is pinned to 4.0.1 — passlib 1.7.4's C-extension binding
-#     breaks on bcrypt ≥ 4.1 on some Render build images.  4.0.1 is the
-#     last version passlib officially supports without a wrapper shim.
-#   • numpy is pinned to <2.0 because speechbrain 1.x still depends on
-#     numpy 1.x APIs.  numpy 2.x introduced breaking changes.
-#   • librosa pulls in numba which is heavy; omit it if cold-start time
-#     matters more than resampling convenience — torchaudio covers all
-#     required resampling for ECAPA-TDNN.
-# =============================================================================
-
-
-# -----------------------------------------------------------------------------
-# 1. Web framework
-# -----------------------------------------------------------------------------
+# Web & DB
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 python-multipart==0.0.9
-
-
-# -----------------------------------------------------------------------------
-# 2. Database
-# -----------------------------------------------------------------------------
 psycopg2-binary==2.9.9
 
-
-# -----------------------------------------------------------------------------
-# 3. Auth / security
-# -----------------------------------------------------------------------------
+# Auth
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-# bcrypt 4.0.1 is the last release fully compatible with passlib 1.7.4.
-# Do NOT upgrade to 4.1.x without also upgrading passlib.
 bcrypt==4.0.1
 
-
-# -----------------------------------------------------------------------------
-# 4. ML core  — install in this order to avoid solver backtracking
-# -----------------------------------------------------------------------------
-
-# PyTorch CPU-only build (no CUDA) — correct for Render free tier.
-# The --index-url trick below is the official way to pull the CPU wheel
-# without downloading the 2 GB CUDA variant.
-# If your build tool does not support --index-url in requirements.txt,
-# add the following line to a separate render-build.sh and call it from
-# your Render "Build Command":
-#   pip install torch==2.2.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cpu
+# ML Core - CPU ONLY
+# We use the direct URL trick to ensure it doesn't pull the 2GB CUDA version
+--index-url https://download.pytorch.org/whl/cpu
 torch==2.2.2
 torchaudio==2.2.2
 
-# SpeechBrain — ECAPA-TDNN speaker verification model.
-# 1.0.1 fixes a minor regression in from_hparams over 1.0.0.
+# Speech & Audio
 speechbrain==1.0.1
-
-# huggingface_hub — pinned to avoid breaking API changes in newer releases.
-# 0.23.0 is the last stable version fully compatible with speechbrain 1.0.x.
 huggingface_hub==0.23.0
-
-
-# -----------------------------------------------------------------------------
-# 5. Audio utilities
-# -----------------------------------------------------------------------------
-
-# numpy <2.0 required by speechbrain 1.x (numpy 2.x broke ndarray internals).
-numpy>=1.26.4,<2.0.0
-
-# scipy — signal processing helpers (resampling fallback, spectral features).
+numpy<2.0.0
 scipy==1.11.4
-
-# soundfile — fast WAV / FLAC read-write via libsndfile.
 soundfile==0.12.1
-
-# pydub — format conversion (WebM / OGG / MP3 → WAV).
 pydub==0.25.1
-
-# imageio-ffmpeg — ships a static ffmpeg binary installable via pip.
-# Replaces the need for apt-get install ffmpeg (which fails on Render free tier).
-# Required for pydub to decode WebM/OGG/MP3 — the default format from Android Chrome.
 imageio-ffmpeg==0.5.1
 
-# librosa — optional resampling / feature extraction convenience layer.
-# Comment out if build time or slug size is a concern; torchaudio is sufficient.
-
-
-
-# -----------------------------------------------------------------------------
-# 6. Validation / config
-# -----------------------------------------------------------------------------
+# Validation
 pydantic[email]==2.7.1
 pydantic-settings==2.2.1
 python-dotenv==1.0.1
