@@ -35,10 +35,15 @@ def trim_memory():
 
 
 def _extract_and_normalise(audio_bytes: bytes, verifier) -> list:
-    import imageio_ffmpeg
     from pydub import AudioSegment
+    import shutil
 
-    AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        AudioSegment.converter = ffmpeg_path
+    else:
+        import imageio_ffmpeg
+        AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
 
     seg = AudioSegment.from_file(io.BytesIO(audio_bytes))
     seg = seg.set_channels(1).set_frame_rate(TARGET_SR).set_sample_width(2)
