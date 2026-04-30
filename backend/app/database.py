@@ -1,8 +1,8 @@
 """
 VoiceAttend AI — app/database.py
 ==================================
-All database helpers. Column name for the hashed password is `password_hash`
-throughout to match what auth.py expects.
+All database helpers for the VoiceAttend backend. 
+Ensures synchronization between Auth, Admin, and Attendance routes.
 """
 
 import os
@@ -13,20 +13,20 @@ from dotenv import load_dotenv
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Connection
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_connection():
+    """Establishes a connection to the PostgreSQL database."""
     return psycopg2.connect(DATABASE_URL)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Schema
+# Schema Initialization
 # ─────────────────────────────────────────────────────────────────────────────
 
 def init_db():
+    """Initializes the database tables if they do not exist."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -48,10 +48,10 @@ def init_db():
             );
 
             CREATE TABLE IF NOT EXISTS class_members (
-                id         SERIAL PRIMARY KEY,
-                class_id   INTEGER REFERENCES classes(id),
-                student_id INTEGER REFERENCES users(id),
-                joined_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                id          SERIAL PRIMARY KEY,
+                class_id    INTEGER REFERENCES classes(id),
+                student_id  INTEGER REFERENCES users(id),
+                joined_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (class_id, student_id)
             );
 
@@ -72,13 +72,12 @@ def init_db():
     finally:
         conn.close()
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Users
+# User Management
 # ─────────────────────────────────────────────────────────────────────────────
 
 def create_user(name: str, email: str, password_hash: str, role: str = "student"):
-    """Insert a new user and return the full row (including password_hash)."""
+    """Inserts a new user and returns the full row."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -94,9 +93,8 @@ def create_user(name: str, email: str, password_hash: str, role: str = "student"
     finally:
         conn.close()
 
-
 def get_user_by_email(email: str):
-    """Return the full user row (including password_hash) or None."""
+    """Returns the user row by email or None."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -105,9 +103,8 @@ def get_user_by_email(email: str):
     finally:
         conn.close()
 
-
 def get_user_by_id(user_id: int):
-    """Return the full user row (including password_hash) or None."""
+    """Returns the user row by ID or None."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -116,13 +113,11 @@ def get_user_by_id(user_id: int):
     finally:
         conn.close()
 
-
-# Alias — auth.py imports both names
+# Alias for auth.py compatibility
 get_user_by_id_internal = get_user_by_id
 
-
 def update_user_password(user_id: int, new_password_hash: str):
-    """Overwrite the stored password hash for a user."""
+    """Updates the password hash for a specific user."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -134,13 +129,12 @@ def update_user_password(user_id: int, new_password_hash: str):
     finally:
         conn.close()
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Voice profiles
+# Voice Biometrics
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_all_voice_profiles():
-    """Return every (user_id, embedding) row — used by voice-login."""
+    """Returns all enrolled voice embeddings for comparison."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -149,22 +143,8 @@ def get_all_voice_profiles():
     finally:
         conn.close()
 
-
-def get_voice_profile(user_id: int):
-    """Return the embedding for one user, or None."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            "SELECT embedding FROM voice_profiles WHERE user_id = %s", (user_id,)
-        )
-        return cur.fetchone()
-    finally:
-        conn.close()
-
-
-def save_voice_profile(user_id: int, embedding):
-    """Upsert a voice embedding for a user."""
+def save_voice_profile(user_id: int, embedding: list[float]):
+    """Upserts a voice fingerprint for a user."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -182,13 +162,12 @@ def save_voice_profile(user_id: int, embedding):
     finally:
         conn.close()
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Enrollment
+# Attendance & Enrollment
 # ─────────────────────────────────────────────────────────────────────────────
 
 def is_enrolled(class_id: int, student_id: int) -> bool:
-    """Return True if the student belongs to the class."""
+    """Checks if a student is registered in a class."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -200,30 +179,8 @@ def is_enrolled(class_id: int, student_id: int) -> bool:
     finally:
         conn.close()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Attendance
-# ─────────────────────────────────────────────────────────────────────────────
-
-def has_attendance_today(class_id: int, user_id: int) -> bool:
-    """Return True if the user already checked in for this class today."""
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            """SELECT id FROM attendance_logs
-               WHERE class_id = %s
-                 AND user_id   = %s
-                 AND timestamp::date = CURRENT_DATE""",
-            (class_id, user_id),
-        )
-        return cur.fetchone() is not None
-    finally:
-        conn.close()
-
-
 def save_attendance(user_id: int, user_name: str, class_id: int):
-    """Insert an attendance log row and return it."""
+    """Records a successful voice check-in."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -238,33 +195,27 @@ def save_attendance(user_id: int, user_name: str, class_id: int):
     finally:
         conn.close()
 
-
-def get_attendance_logs(user_id=None, class_id=None):
-    """Fetch logs filtered by user and/or class, newest first."""
+def has_attendance_today(class_id: int, user_id: int) -> bool:
+    """Prevents duplicate attendance on the same day."""
     conn = get_connection()
     try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        query = "SELECT * FROM attendance_logs WHERE 1=1"
-        params = []
-        if user_id is not None:
-            query += " AND user_id = %s"
-            params.append(user_id)
-        if class_id is not None:
-            query += " AND class_id = %s"
-            params.append(class_id)
-        query += " ORDER BY timestamp DESC"
-        cur.execute(query, params)
-        return cur.fetchall()
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id FROM attendance_logs
+               WHERE class_id = %s AND user_id = %s
+               AND timestamp::date = CURRENT_DATE""",
+            (class_id, user_id),
+        )
+        return cur.fetchone() is not None
     finally:
         conn.close()
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Admin & Management Helpers
+# Admin & Management
 # ─────────────────────────────────────────────────────────────────────────────
 
 def list_all_users():
-    """Returns all users for the admin management panel (no password_hash)."""
+    """Returns user list for Admin Panel (omits sensitive data)."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -273,9 +224,8 @@ def list_all_users():
     finally:
         conn.close()
 
-
 def delete_user(user_id: int) -> bool:
-    """Deletes a user and returns True if a row was actually removed."""
+    """Deletes a user account and returns success status."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -286,9 +236,8 @@ def delete_user(user_id: int) -> bool:
     finally:
         conn.close()
 
-
 def get_all_logs():
-    """Returns every attendance log in the system (Admin view)."""
+    """Returns a joined view of all logs for the Admin view."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
