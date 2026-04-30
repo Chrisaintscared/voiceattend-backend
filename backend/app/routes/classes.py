@@ -48,6 +48,8 @@ def create_class(body: CreateClassRequest, user=Depends(get_current_user)):
         conn.commit()
         row = cur.fetchone()
         return {"id": row[0], "name": row[1], "code": row[2]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create class: {str(e)}")
     finally:
         conn.close()
 
@@ -79,6 +81,10 @@ def join_class(body: JoinClassRequest, user=Depends(get_current_user)):
 
         create_join_request(class_id, user["id"])
         return {"message": "Join request sent. Waiting for teacher approval."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to join class: {str(e)}")
     finally:
         conn.close()
 
@@ -103,6 +109,8 @@ def my_classes(user=Depends(get_current_user)):
             )
         rows = cur.fetchall()
         return [{"id": r[0], "name": r[1], "code": r[2]} for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load classes: {str(e)}")
     finally:
         conn.close()
 
@@ -111,7 +119,10 @@ def my_classes(user=Depends(get_current_user)):
 def get_all_my_requests(user=Depends(get_current_user)):
     if user["role"] != "teacher":
         raise HTTPException(status_code=403, detail="Teachers only")
-    return get_pending_requests_for_teacher(user["id"])
+    try:
+        return get_pending_requests_for_teacher(user["id"])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load requests: {str(e)}")
 
 
 @router.get("/{class_id}/requests")
@@ -127,9 +138,17 @@ def get_class_requests(class_id: int, user=Depends(get_current_user)):
         )
         if not cur.fetchone():
             raise HTTPException(status_code=403, detail="Not your class")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to verify class: {str(e)}")
     finally:
         conn.close()
-    return get_pending_requests(class_id)
+
+    try:
+        return get_pending_requests(class_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load requests: {str(e)}")
 
 
 @router.post("/{class_id}/requests/{student_id}/approve")
@@ -145,10 +164,18 @@ def approve_request(class_id: int, student_id: int, user=Depends(get_current_use
         )
         if not cur.fetchone():
             raise HTTPException(status_code=403, detail="Not your class")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to verify class: {str(e)}")
     finally:
         conn.close()
-    approve_join_request(class_id, student_id)
-    return {"message": "Student approved"}
+
+    try:
+        approve_join_request(class_id, student_id)
+        return {"message": "Student approved"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to approve: {str(e)}")
 
 
 @router.post("/{class_id}/requests/{student_id}/decline")
@@ -164,10 +191,18 @@ def decline_request(class_id: int, student_id: int, user=Depends(get_current_use
         )
         if not cur.fetchone():
             raise HTTPException(status_code=403, detail="Not your class")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to verify class: {str(e)}")
     finally:
         conn.close()
-    decline_join_request(class_id, student_id)
-    return {"message": "Student declined"}
+
+    try:
+        decline_join_request(class_id, student_id)
+        return {"message": "Student declined"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to decline: {str(e)}")
 
 
 @router.get("/{class_id}/members")
@@ -186,6 +221,8 @@ def get_members(class_id: int, user=Depends(get_current_user)):
         )
         rows = cur.fetchall()
         return [{"id": r[0], "name": r[1], "email": r[2]} for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load members: {str(e)}")
     finally:
         conn.close()
 
@@ -195,12 +232,36 @@ def get_attendance(class_id: int, user=Depends(get_current_user)):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(
-            "SELECT user_name, timestamp FROM attendance_logs WHERE class_id = %s ORDER BY timestamp DESC",
-            (class_id,),
-        )
+
+        if user["role"] == "teacher":
+            # ✅ Teachers see ALL logs for the class, with student names
+            cur.execute(
+                """
+                SELECT user_name, timestamp
+                FROM attendance_logs
+                WHERE class_id = %s
+                ORDER BY timestamp DESC
+                """,
+                (class_id,),
+            )
+        else:
+            # ✅ Students only see their own logs for this class
+            cur.execute(
+                """
+                SELECT user_name, timestamp
+                FROM attendance_logs
+                WHERE class_id = %s AND user_id = %s
+                ORDER BY timestamp DESC
+                """,
+                (class_id, user["id"]),
+            )
+
         rows = cur.fetchall()
         return {"logs": [{"user_name": r[0], "timestamp": str(r[1])} for r in rows]}
+
+    except Exception as e:
+        # ✅ Always returns JSON — never an HTML 500 page
+        raise HTTPException(status_code=500, detail=f"Failed to load attendance: {str(e)}")
     finally:
         conn.close()
 
@@ -211,5 +272,8 @@ async def checkin(
     voice: UploadFile = File(...),
     user=Depends(get_current_user),
 ):
-    save_attendance(user["id"], user["name"], class_id)
-    return {"status": "success", "confidence": 98.5}
+    try:
+        save_attendance(user["id"], user["name"], class_id)
+        return {"status": "success", "confidence": 98.5}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Check-in failed: {str(e)}")
