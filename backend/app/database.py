@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -42,7 +43,7 @@ def init_db():
             );
             CREATE TABLE IF NOT EXISTS voice_profiles (
                 user_id   INTEGER PRIMARY KEY REFERENCES users(id),
-                embedding FLOAT8[] NOT NULL
+                embedding JSONB NOT NULL
             );
             CREATE TABLE IF NOT EXISTS attendance_logs (
                 id        SERIAL PRIMARY KEY,
@@ -50,6 +51,14 @@ def init_db():
                 user_name TEXT NOT NULL,
                 class_id  INTEGER REFERENCES classes(id),
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS join_requests (
+                id           SERIAL PRIMARY KEY,
+                class_id     INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+                student_id   INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                status       TEXT DEFAULT 'pending',
+                requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (class_id, student_id)
             );
         """)
         conn.commit()
@@ -85,7 +94,6 @@ def get_user_by_email(email: str):
 
 
 def get_user_by_id(user_id: int):
-    """Returns user without password_hash (safe for API responses)."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -98,7 +106,6 @@ def get_user_by_id(user_id: int):
 
 
 def get_user_by_id_internal(user_id: int):
-    """Returns full user row including password_hash (for internal auth checks)."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -150,7 +157,11 @@ def get_all_voice_profiles():
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT user_id, embedding FROM voice_profiles")
-        return cur.fetchall()
+        rows = cur.fetchall()
+        for row in rows:
+            if isinstance(row["embedding"], str):
+                row["embedding"] = json.loads(row["embedding"])
+        return rows
     finally:
         conn.close()
 
@@ -160,7 +171,10 @@ def get_voice_profile(user_id: int):
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT * FROM voice_profiles WHERE user_id = %s", (user_id,))
-        return cur.fetchone()
+        row = cur.fetchone()
+        if row and isinstance(row["embedding"], str):
+            row["embedding"] = json.loads(row["embedding"])
+        return row
     finally:
         conn.close()
 
@@ -175,7 +189,7 @@ def save_voice_profile(user_id: int, embedding: list[float]):
             VALUES (%s, %s)
             ON CONFLICT (user_id) DO UPDATE SET embedding = EXCLUDED.embedding
             """,
-            (user_id, embedding),
+            (user_id, json.dumps(embedding)),
         )
         conn.commit()
     finally:
@@ -393,17 +407,9 @@ def get_all_logs():
         return cur.fetchall()
     finally:
         conn.close()
-# Add to init_db() inside the CREATE TABLE block:
-"""
-CREATE TABLE IF NOT EXISTS join_requests (
-    id         SERIAL PRIMARY KEY,
-    class_id   INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-    student_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    status     TEXT DEFAULT 'pending',
-    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (class_id, student_id)
-);
-"""
+
+
+# ── Join request helpers ──────────────────────────────────────────────────────
 
 def create_join_request(class_id: int, student_id: int):
     conn = get_connection()
@@ -424,6 +430,7 @@ def create_join_request(class_id: int, student_id: int):
     finally:
         conn.close()
 
+
 def get_pending_requests(class_id: int):
     conn = get_connection()
     try:
@@ -442,6 +449,7 @@ def get_pending_requests(class_id: int):
         return cur.fetchall()
     finally:
         conn.close()
+
 
 def get_pending_requests_for_teacher(teacher_id: int):
     conn = get_connection()
@@ -464,6 +472,7 @@ def get_pending_requests_for_teacher(teacher_id: int):
     finally:
         conn.close()
 
+
 def approve_join_request(class_id: int, student_id: int):
     conn = get_connection()
     try:
@@ -484,6 +493,7 @@ def approve_join_request(class_id: int, student_id: int):
     finally:
         conn.close()
 
+
 def decline_join_request(class_id: int, student_id: int):
     conn = get_connection()
     try:
@@ -495,6 +505,7 @@ def decline_join_request(class_id: int, student_id: int):
         conn.commit()
     finally:
         conn.close()
+
 
 def get_join_request_status(class_id: int, student_id: int):
     conn = get_connection()
