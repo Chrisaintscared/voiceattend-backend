@@ -18,13 +18,13 @@ def list_users(admin=Depends(require_admin)):
     return list_all_users()
 
 @router.delete("/users/{user_id}", status_code=204)
-def remove_user(user_id: int, admin=Depends(require_admin)): # Fixed: int type
+def remove_user(user_id: int, admin=Depends(require_admin)):
     success = delete_user(user_id)
     if not success:
         raise HTTPException(status_code=404, detail="User not found")
 
 @router.put("/users/{user_id}/role")
-def update_role(user_id: int, body: RoleUpdate, admin=Depends(require_admin)): # Fixed: int type
+def update_role(user_id: int, body: RoleUpdate, admin=Depends(require_admin)):
     if body.role not in ("admin", "student", "teacher"):
         raise HTTPException(status_code=400, detail="Invalid role")
 
