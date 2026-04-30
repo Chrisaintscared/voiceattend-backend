@@ -117,3 +117,12 @@ def get_all_logs():
         return cur.fetchall()
     finally:
         conn.close()
+
+def get_all_voice_profiles():
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT user_id, embedding FROM voice_profiles")
+        return cur.fetchall()
+    finally:
+        conn.close()
