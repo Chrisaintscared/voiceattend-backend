@@ -84,3 +84,7 @@ def root() -> dict:
 @app.get("/health", tags=["health"])
 def health() -> dict:
     return root()
+    
+from app.routes import router as api_router
+
+app.include_router(api_router)
