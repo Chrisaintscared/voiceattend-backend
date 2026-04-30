@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from app.database import get_connection, save_attendance
 from app.security import get_current_user
 
-router = APIRouter(prefix="/classes", tags=["classes"])
+router = APIRouter(tags=["classes"])  # prefix removed — main.py adds /classes
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -64,7 +64,6 @@ def join_class(body: JoinClassRequest, user=Depends(get_current_user)):
         if not cls:
             raise HTTPException(status_code=404, detail="Invalid class code")
 
-        # Prevent duplicate membership
         cur.execute(
             "SELECT id FROM class_members WHERE class_id = %s AND student_id = %s",
             (cls[0], user["id"]),
@@ -127,6 +126,5 @@ async def checkin(
     voice: UploadFile = File(...),
     user=Depends(get_current_user),
 ):
-    # Placeholder — real voice verification is handled by /attendance/mark
     save_attendance(user["id"], user["name"], class_id)
     return {"status": "success", "confidence": 98.5}
