@@ -22,10 +22,6 @@ TARGET_SR = 16_000
 ENERGY_SILENCE_THRESH = 0.005
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
 def trim_memory():
     try:
         libc = ctypes.CDLL("libc.so.6")
@@ -63,10 +59,6 @@ def _extract_and_normalise(audio_bytes: bytes, verifier) -> list:
         raise ValueError("Could not extract a valid voice embedding.")
     return (emb_np / norm).tolist()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Routes
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/enroll-voice")
 async def enroll_voice(
@@ -110,9 +102,9 @@ async def enroll_voice(
 
     except HTTPException:
         raise
-    except Exception:
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Internal server error during enrollment")
+    except Exception as e:
+        logger.error("FULL TRACEBACK:\n%s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Enrollment failed: {type(e).__name__}: {str(e)}")
     finally:
         if verifier is not None:
             del verifier
