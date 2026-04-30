@@ -8,7 +8,7 @@ from app.database import (
 )
 from app.security import require_admin
 
-router = APIRouter(tags=["admin"])
+router = APIRouter() # tags are handled in main.py
 
 class RoleUpdate(BaseModel):
     role: str
