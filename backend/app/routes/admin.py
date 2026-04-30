@@ -10,38 +10,22 @@ from app.security import require_admin
 
 router = APIRouter(tags=["admin"])
 
-
-# ─────────────────────────────
-# ROLE MODEL
-# ─────────────────────────────
 class RoleUpdate(BaseModel):
     role: str
 
-
-# ─────────────────────────────
-# GET /admin/users
-# ─────────────────────────────
 @router.get("/users")
 def list_users(admin=Depends(require_admin)):
     return list_all_users()
 
-
-# ─────────────────────────────
-# DELETE /admin/users/{user_id}
-# ─────────────────────────────
 @router.delete("/users/{user_id}", status_code=204)
-def remove_user(user_id: str, admin=Depends(require_admin)):
+def remove_user(user_id: int, admin=Depends(require_admin)): # Fixed: int type
     success = delete_user(user_id)
     if not success:
         raise HTTPException(status_code=404, detail="User not found")
 
-
-# ─────────────────────────────
-# PUT /admin/users/{user_id}/role
-# ─────────────────────────────
 @router.put("/users/{user_id}/role")
-def update_role(user_id: str, body: RoleUpdate, admin=Depends(require_admin)):
-    if body.role not in ("admin", "user"):
+def update_role(user_id: int, body: RoleUpdate, admin=Depends(require_admin)): # Fixed: int type
+    if body.role not in ("admin", "student", "teacher"):
         raise HTTPException(status_code=400, detail="Invalid role")
 
     conn = get_connection()
@@ -56,16 +40,8 @@ def update_role(user_id: str, body: RoleUpdate, admin=Depends(require_admin)):
                     raise HTTPException(status_code=404, detail="User not found")
     finally:
         conn.close()
+    return {"user_id": user_id, "role": body.role}
 
-    return {
-        "user_id": user_id,
-        "role": body.role
-    }
-
-
-# ─────────────────────────────
-# GET /admin/attendance
-# ─────────────────────────────
 @router.get("/attendance")
 def get_attendance(limit: int = 100, admin=Depends(require_admin)):
     logs = get_all_logs()
