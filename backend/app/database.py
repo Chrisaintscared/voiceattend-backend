@@ -393,3 +393,117 @@ def get_all_logs():
         return cur.fetchall()
     finally:
         conn.close()
+# Add to init_db() inside the CREATE TABLE block:
+"""
+CREATE TABLE IF NOT EXISTS join_requests (
+    id         SERIAL PRIMARY KEY,
+    class_id   INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    student_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    status     TEXT DEFAULT 'pending',
+    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (class_id, student_id)
+);
+"""
+
+def create_join_request(class_id: int, student_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            INSERT INTO join_requests (class_id, student_id)
+            VALUES (%s, %s)
+            ON CONFLICT (class_id, student_id) DO NOTHING
+            RETURNING *
+            """,
+            (class_id, student_id),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return row
+    finally:
+        conn.close()
+
+def get_pending_requests(class_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT jr.id, jr.student_id, jr.requested_at,
+                   u.name AS student_name, u.email AS student_email
+            FROM join_requests jr
+            JOIN users u ON u.id = jr.student_id
+            WHERE jr.class_id = %s AND jr.status = 'pending'
+            ORDER BY jr.requested_at ASC
+            """,
+            (class_id,),
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+def get_pending_requests_for_teacher(teacher_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT jr.id, jr.class_id, jr.student_id, jr.requested_at,
+                   u.name AS student_name, u.email AS student_email,
+                   c.name AS class_name
+            FROM join_requests jr
+            JOIN users u ON u.id = jr.student_id
+            JOIN classes c ON c.id = jr.class_id
+            WHERE c.teacher_id = %s AND jr.status = 'pending'
+            ORDER BY jr.requested_at ASC
+            """,
+            (teacher_id,),
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+def approve_join_request(class_id: int, student_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE join_requests SET status = 'approved' WHERE class_id = %s AND student_id = %s",
+            (class_id, student_id),
+        )
+        cur.execute(
+            """
+            INSERT INTO class_members (class_id, student_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (class_id, student_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+def decline_join_request(class_id: int, student_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE join_requests SET status = 'declined' WHERE class_id = %s AND student_id = %s",
+            (class_id, student_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_join_request_status(class_id: int, student_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT status FROM join_requests WHERE class_id = %s AND student_id = %s",
+            (class_id, student_id),
+        )
+        return cur.fetchone()
+    finally:
+        conn.close()
