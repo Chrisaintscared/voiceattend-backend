@@ -31,13 +31,12 @@ SIMILARITY_THRESHOLD = 0.72
 TARGET_SR = 16_000
 ENERGY_SILENCE_THRESH = 0.02
 
-# ── Lazy-loaded model (loaded once, reused across requests) ───────────────────
+# ── Lazy-loaded model ─────────────────────────────────────────────────────────
 _verifier = None
 _verifier_lock = asyncio.Lock()
 
 
 async def _get_verifier():
-    """Load SpeakerRecognition model once and cache it for subsequent calls."""
     global _verifier
     async with _verifier_lock:
         if _verifier is None:
@@ -49,6 +48,12 @@ async def _get_verifier():
                 savedir="pretrained_models/spkrec-xvect",
                 run_opts={"device": "cpu"},
             )
+            # Freeze model weights to save memory
+            for param in _verifier.mods.parameters():
+                param.requires_grad_(False)
+
+            gc.collect()
+            _trim_memory()
             logger.info("SpeakerRecognition model loaded.")
     return _verifier
 
@@ -77,12 +82,19 @@ def _extract_embedding(audio_bytes: bytes, verifier) -> np.ndarray:
     if rms_energy < ENERGY_SILENCE_THRESH:
         raise ValueError("Audio is too quiet. Please speak more clearly.")
 
-    with torch.no_grad():
-        embedding = verifier.encode_batch(
-            torch.tensor(samples).unsqueeze(0), torch.tensor([1.0])
-        )
+    # Use no_grad + explicit tensor cleanup
+    tensor_input = torch.tensor(samples).unsqueeze(0)
+    tensor_len = torch.tensor([1.0])
+    try:
+        with torch.no_grad():
+            embedding = verifier.encode_batch(tensor_input, tensor_len)
+        emb_np = embedding.squeeze().cpu().numpy().copy()
+    finally:
+        # Explicitly delete tensors to free memory immediately
+        del tensor_input, tensor_len, embedding
+        gc.collect()
+        _trim_memory()
 
-    emb_np = embedding.squeeze().cpu().numpy()
     norm = np.linalg.norm(emb_np)
     if norm == 0:
         raise ValueError("Could not extract a valid voice embedding.")
@@ -97,28 +109,16 @@ async def mark_attendance(
     audio: UploadFile = File(...),
     user=Depends(get_current_user),
 ):
-    """
-    Mark attendance for the authenticated student.
-
-    Steps:
-      1. Check enrollment in the class.
-      2. Check for duplicate attendance today.
-      3. Verify voice against stored profile.
-      4. Save the log and return confidence score.
-    """
-    # ── STEP 1: Enrollment check ──────────────────────────────────────────────
     if not is_enrolled(class_id, user["id"]):
         raise HTTPException(
             status_code=403, detail="You are not enrolled in this class."
         )
 
-    # ── STEP 2: Duplicate attendance check ───────────────────────────────────
     if has_attendance_today(class_id, user["id"]):
         raise HTTPException(
             status_code=409, detail="Attendance already marked for today."
         )
 
-    # ── STEP 3: Voice profile exists? ────────────────────────────────────────
     stored = get_voice_profile(user["id"])
     if not stored:
         raise HTTPException(
@@ -126,7 +126,6 @@ async def mark_attendance(
             detail="No voice profile found. Please enroll your voice first.",
         )
 
-    # ── STEP 4: Extract live embedding ───────────────────────────────────────
     try:
         gc.collect()
         _trim_memory()
@@ -149,7 +148,6 @@ async def mark_attendance(
                 status_code=504, detail="Voice processing timed out. Try again."
             )
 
-        # ── STEP 5: Cosine similarity ─────────────────────────────────────────
         stored_emb = np.array(stored["embedding"])
         similarity = float(np.dot(live_emb, stored_emb))
 
@@ -159,7 +157,6 @@ async def mark_attendance(
                 detail=f"Voice not recognised (score: {similarity:.2f}). Try again.",
             )
 
-        # ── STEP 6: Persist log ───────────────────────────────────────────────
         save_attendance(
             user_id=user["id"],
             user_name=user["name"],
@@ -183,10 +180,6 @@ async def get_logs(
     class_id: int | None = None,
     user=Depends(get_current_user),
 ):
-    """
-    Return attendance logs for the authenticated user.
-    Teachers/admins may additionally filter by class_id.
-    """
     try:
         logs = get_attendance_logs(user_id=user["id"], class_id=class_id)
         return {"logs": logs}
@@ -197,5 +190,4 @@ async def get_logs(
 
 @router.get("/test")
 async def test_connection():
-    """Health-check endpoint used by the Flutter client."""
     return {"status": "ok"}
