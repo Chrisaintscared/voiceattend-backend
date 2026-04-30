@@ -67,11 +67,9 @@ def join_class(body: JoinClassRequest, user=Depends(get_current_user)):
 
         class_id = cls[0]
 
-        # Already a member
         if is_enrolled(class_id, user["id"]):
             raise HTTPException(status_code=409, detail="Already enrolled in this class")
 
-        # Check existing request
         status = get_join_request_status(class_id, user["id"])
         if status:
             if status["status"] == "pending":
@@ -111,7 +109,6 @@ def my_classes(user=Depends(get_current_user)):
 
 @router.get("/requests")
 def get_all_my_requests(user=Depends(get_current_user)):
-    """Teacher: get all pending join requests across their classes."""
     if user["role"] != "teacher":
         raise HTTPException(status_code=403, detail="Teachers only")
     return get_pending_requests_for_teacher(user["id"])
@@ -119,7 +116,6 @@ def get_all_my_requests(user=Depends(get_current_user)):
 
 @router.get("/{class_id}/requests")
 def get_class_requests(class_id: int, user=Depends(get_current_user)):
-    """Teacher: get pending requests for a specific class."""
     if user["role"] != "teacher":
         raise HTTPException(status_code=403, detail="Teachers only")
     conn = get_connection()
@@ -172,6 +168,26 @@ def decline_request(class_id: int, student_id: int, user=Depends(get_current_use
         conn.close()
     decline_join_request(class_id, student_id)
     return {"message": "Student declined"}
+
+
+@router.get("/{class_id}/members")
+def get_members(class_id: int, user=Depends(get_current_user)):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT u.id, u.name, u.email FROM users u
+            JOIN class_members cm ON u.id = cm.student_id
+            WHERE cm.class_id = %s
+            ORDER BY u.name
+            """,
+            (class_id,),
+        )
+        rows = cur.fetchall()
+        return [{"id": r[0], "name": r[1], "email": r[2]} for r in rows]
+    finally:
+        conn.close()
 
 
 @router.get("/{class_id}/attendance")
