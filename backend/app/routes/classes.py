@@ -4,23 +4,25 @@ import string
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.database import get_connection, save_attendance
+from app.database import (
+    get_connection,
+    save_attendance,
+    create_join_request,
+    get_pending_requests,
+    get_pending_requests_for_teacher,
+    approve_join_request,
+    decline_join_request,
+    get_join_request_status,
+    is_enrolled,
+)
 from app.security import get_current_user
 
-router = APIRouter(tags=["classes"])  # prefix removed — main.py adds /classes
+router = APIRouter(tags=["classes"])
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 def generate_code(length: int = 6) -> str:
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Request models
-# ─────────────────────────────────────────────────────────────────────────────
 
 class CreateClassRequest(BaseModel):
     name: str
@@ -29,10 +31,6 @@ class CreateClassRequest(BaseModel):
 class JoinClassRequest(BaseModel):
     code: str
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Routes
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/create", status_code=201)
 def create_class(body: CreateClassRequest, user=Depends(get_current_user)):
@@ -56,6 +54,9 @@ def create_class(body: CreateClassRequest, user=Depends(get_current_user)):
 
 @router.post("/join")
 def join_class(body: JoinClassRequest, user=Depends(get_current_user)):
+    if user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Only students can join classes")
+
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -64,19 +65,22 @@ def join_class(body: JoinClassRequest, user=Depends(get_current_user)):
         if not cls:
             raise HTTPException(status_code=404, detail="Invalid class code")
 
-        cur.execute(
-            "SELECT id FROM class_members WHERE class_id = %s AND student_id = %s",
-            (cls[0], user["id"]),
-        )
-        if cur.fetchone():
+        class_id = cls[0]
+
+        # Already a member
+        if is_enrolled(class_id, user["id"]):
             raise HTTPException(status_code=409, detail="Already enrolled in this class")
 
-        cur.execute(
-            "INSERT INTO class_members (class_id, student_id) VALUES (%s, %s)",
-            (cls[0], user["id"]),
-        )
-        conn.commit()
-        return {"message": "Joined successfully"}
+        # Check existing request
+        status = get_join_request_status(class_id, user["id"])
+        if status:
+            if status["status"] == "pending":
+                raise HTTPException(status_code=409, detail="Join request already pending")
+            if status["status"] == "declined":
+                raise HTTPException(status_code=403, detail="Your request was declined by the teacher")
+
+        create_join_request(class_id, user["id"])
+        return {"message": "Join request sent. Waiting for teacher approval."}
     finally:
         conn.close()
 
@@ -103,6 +107,71 @@ def my_classes(user=Depends(get_current_user)):
         return [{"id": r[0], "name": r[1], "code": r[2]} for r in rows]
     finally:
         conn.close()
+
+
+@router.get("/requests")
+def get_all_my_requests(user=Depends(get_current_user)):
+    """Teacher: get all pending join requests across their classes."""
+    if user["role"] != "teacher":
+        raise HTTPException(status_code=403, detail="Teachers only")
+    return get_pending_requests_for_teacher(user["id"])
+
+
+@router.get("/{class_id}/requests")
+def get_class_requests(class_id: int, user=Depends(get_current_user)):
+    """Teacher: get pending requests for a specific class."""
+    if user["role"] != "teacher":
+        raise HTTPException(status_code=403, detail="Teachers only")
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM classes WHERE id = %s AND teacher_id = %s",
+            (class_id, user["id"]),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=403, detail="Not your class")
+    finally:
+        conn.close()
+    return get_pending_requests(class_id)
+
+
+@router.post("/{class_id}/requests/{student_id}/approve")
+def approve_request(class_id: int, student_id: int, user=Depends(get_current_user)):
+    if user["role"] != "teacher":
+        raise HTTPException(status_code=403, detail="Teachers only")
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM classes WHERE id = %s AND teacher_id = %s",
+            (class_id, user["id"]),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=403, detail="Not your class")
+    finally:
+        conn.close()
+    approve_join_request(class_id, student_id)
+    return {"message": "Student approved"}
+
+
+@router.post("/{class_id}/requests/{student_id}/decline")
+def decline_request(class_id: int, student_id: int, user=Depends(get_current_user)):
+    if user["role"] != "teacher":
+        raise HTTPException(status_code=403, detail="Teachers only")
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM classes WHERE id = %s AND teacher_id = %s",
+            (class_id, user["id"]),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=403, detail="Not your class")
+    finally:
+        conn.close()
+    decline_join_request(class_id, student_id)
+    return {"message": "Student declined"}
 
 
 @router.get("/{class_id}/attendance")
